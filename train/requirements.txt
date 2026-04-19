@@ -1,0 +1,6 @@
+# Training-only deps (install PyTorch separately with cu128 index first)
+transformers==4.51.3
+datasets==3.5.0
+accelerate==1.6.0
+tokenizers>=0.21.0
+numpy>=1.26.0,<3.0

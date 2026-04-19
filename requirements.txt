@@ -1,0 +1,31 @@
+# ──────────────────────────────────────────────────────────────────
+# Full local dev requirements
+# Python 3.12 | RTX 3060 laptop (6 GB VRAM) | Driver CUDA 13.2
+#
+# Install PyTorch FIRST with the CUDA 12.8 index:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+#
+# Then install the rest:
+#   pip install -r requirements.txt
+# ──────────────────────────────────────────────────────────────────
+
+# HuggingFace stack – Python 3.12 + PyTorch 2.x tested
+transformers==4.51.3
+datasets==3.5.0
+accelerate==1.6.0
+tokenizers>=0.21.0
+
+# ONNX export + INT8 quantization
+onnx==1.17.0
+onnxruntime-gpu==1.21.0      # CUDA 12.x + Python 3.12 wheel on PyPI
+onnxscript>=0.1.0             # required by torch.onnx in PyTorch 2.9+
+
+# Serve
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pydantic==2.11.3
+
+# Utils
+numpy>=1.26.0,<3.0
+rank-bm25==0.2.2
+gradio>=4.44.0

@@ -1,0 +1,118 @@
+name: CI/CD – XR QA System
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE_NAME: xr-qa
+  ECR_REPOSITORY: xr-qa           # update with your ECR repo name
+  AWS_REGION: us-east-1
+
+jobs:
+  # ─────────────────────────────────────────────
+  # 1. Lint + unit tests
+  # ─────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: pip install ruff pytest
+
+      - name: Lint
+        run: ruff check . --select E,F,W --ignore E501
+
+      - name: Smoke-test corpus generation
+        run: python data/generate_corpus.py
+
+  # ─────────────────────────────────────────────
+  # 2. Build & push Docker image (main only)
+  # ─────────────────────────────────────────────
+  build-push:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC for AWS
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, push
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          SHA: ${{ github.sha }}
+        run: |
+          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY:$SHA"
+          LATEST_URI="$REGISTRY/$ECR_REPOSITORY:latest"
+          docker build -t "$IMAGE_URI" -t "$LATEST_URI" .
+          docker push "$IMAGE_URI"
+          docker push "$LATEST_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      - name: Save image URI artifact
+        run: echo "$IMAGE_URI" > image_uri.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-uri
+          path: image_uri.txt
+
+  # ─────────────────────────────────────────────
+  # 3. Deploy to EC2 (main only)
+  # ─────────────────────────────────────────────
+  deploy:
+    needs: build-push
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-uri
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to EC2 via SSM
+        env:
+          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          IMAGE_URI=$(cat image_uri.txt)
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --region "$AWS_REGION" \
+            --parameters "commands=[
+              'bash /opt/xr-qa/deploy/deploy.sh $IMAGE_URI'
+            ]" \
+            --comment "Deploy xr-qa ${{ github.sha }}" \
+            --output text \
+            --query "Command.CommandId"

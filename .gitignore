@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Large model artifacts – store in S3/HuggingFace Hub, not git
+models/
+
+# Generated data (can be reproduced via generate_corpus.py)
+data/xr_corpus.json
+data/xr_qa_squad.json
+
+# Secrets
+.env
+*.pem
+*.key
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
