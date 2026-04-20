@@ -128,8 +128,20 @@ pip install -r requirements.txt
 
 # 3. Set your Groq API key
 cp .env.example .env
-# edit .env → add GROQ_API_KEY=gsk_...
+# edit .env → GROQ_API_KEY=gsk_...
+```
 
+> **Important:** `GROQ_API_KEY` must be set before starting the server. The server reads it
+> at import time via `python-dotenv`. If synthesis shows `"extractive_only"` in `/health`,
+> either `python-dotenv` is not installed (`pip install python-dotenv`) or the server
+> started before the key was loaded — restart with the key exported:
+> ```bash
+> export GROQ_API_KEY=gsk_...   # Linux/Mac
+> set GROQ_API_KEY=gsk_...      # Windows cmd
+> $env:GROQ_API_KEY="gsk_..."   # Windows PowerShell
+> ```
+
+```bash
 # 4. Build demo corpus and run the full pipeline
 make demo-corpus   # generates data/corpus.json + qa_dataset.json
 make train         # fine-tunes roberta-base-squad2
@@ -141,7 +153,10 @@ make serve         # FastAPI + Web UI on :8000
 make ui            # Gradio on :7860 (optional)
 ```
 
-**Smoke test** (no model files required for most tests):
+> **First run note:** Dense retrieval downloads `BAAI/bge-small-en-v1.5` (~130 MB) and
+> builds the ChromaDB index on startup. This takes ~30 seconds once; subsequent starts are instant.
+
+**Smoke test** (no model files required):
 ```bash
 make smoke
 ```
@@ -228,7 +243,7 @@ docpilot/
 │   ├── export_onnx.py      # PyTorch → ONNX FP32 (opset 14)
 │   └── quantize_int8.py    # Dynamic INT8 quantization + benchmark
 ├── data/
-│   └── build_demo_corpus.py # Synthetic XR domain corpus (85 passages, ~96 QA pairs)
+│   └── build_demo_corpus.py # Synthetic XR domain corpus (43 passages, ~96 QA pairs)
 ├── ui/
 │   └── index.html          # Custom SPA web UI (Tailwind CDN + vanilla JS)
 ├── tests/
