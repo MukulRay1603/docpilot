@@ -7,9 +7,9 @@ venv/
 # Large model artifacts – store in S3/HuggingFace Hub, not git
 models/
 
-# Generated data (can be reproduced via generate_corpus.py)
-data/xr_corpus.json
-data/xr_qa_squad.json
+# Generated data (reproduce with: python data/build_demo_corpus.py)
+data/corpus.json
+data/qa_dataset.json
 
 # Secrets
 .env

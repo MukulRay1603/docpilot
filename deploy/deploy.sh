@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Zero-downtime blue/green deploy for the XR QA container.
+# Zero-downtime blue/green deploy for the DocPilot container.
 #
 # Usage: deploy.sh <IMAGE_URI>
-# Example: deploy.sh 123456789.dkr.ecr.us-east-1.amazonaws.com/xr-qa:abc1234
+# Example: deploy.sh 123456789.dkr.ecr.us-east-1.amazonaws.com/docpilot:abc1234
 #
 # Strategy:
 #   1. Pull the new image
@@ -15,8 +15,8 @@ set -euo pipefail
 IMAGE_URI="${1:?Usage: deploy.sh <IMAGE_URI>}"
 APP_PORT=8000
 GREEN_PORT=8001
-CONTAINER_BLUE="xr-qa-blue"
-CONTAINER_GREEN="xr-qa-green"
+CONTAINER_BLUE="docpilot-blue"
+CONTAINER_GREEN="docpilot-green"
 NGINX_UPSTREAM="/etc/nginx/conf.d/xr-qa-upstream.conf"
 HEALTH_URL="http://localhost:${GREEN_PORT}/health"
 HEALTH_TIMEOUT=60
@@ -54,7 +54,7 @@ log "Green is healthy."
 if command -v nginx &>/dev/null; then
   log "Switching nginx upstream to :${GREEN_PORT} …"
   cat > "$NGINX_UPSTREAM" <<EOF
-upstream xr_qa_backend {
+upstream docpilot_backend {
     server 127.0.0.1:${GREEN_PORT};
 }
 EOF

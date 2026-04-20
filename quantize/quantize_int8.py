@@ -4,8 +4,8 @@ INT8 post-training quantization of the ONNX model using ONNX Runtime.
 Usage:
     python quantize/quantize_int8.py
 
-Input:  models/xr_qa_onnx/model.onnx
-Output: models/xr_qa_int8/model_int8.onnx
+Input:  models/qa_onnx/model.onnx
+Output: models/qa_int8/model_int8.onnx
 
 Then runs a latency benchmark comparing FP32 vs INT8.
 """
@@ -20,8 +20,8 @@ import numpy as np
 from onnxruntime.quantization import quantize_dynamic, QuantType
 import onnxruntime as ort
 
-ONNX_DIR = Path(__file__).parent.parent / "models" / "xr_qa_onnx"
-INT8_DIR = Path(__file__).parent.parent / "models" / "xr_qa_int8"
+ONNX_DIR = Path(__file__).parent.parent / "models" / "qa_onnx"
+INT8_DIR = Path(__file__).parent.parent / "models" / "qa_int8"
 FP32_PATH = ONNX_DIR / "model.onnx"
 INT8_PATH = INT8_DIR / "model_int8.onnx"
 MAX_LENGTH = 384

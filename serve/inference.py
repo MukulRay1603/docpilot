@@ -31,7 +31,7 @@ ort.InferenceSession.get_inputs_names_ = lambda self: _input_names(self)
 class QAEngine:
     def __init__(self, model_dir: Path):
         int8_path = model_dir / "model_int8.onnx"
-        fp32_path = model_dir.parent / "xr_qa_onnx" / "model.onnx"
+        fp32_path = model_dir.parent / "qa_onnx" / "model.onnx"
         model_path = int8_path if int8_path.exists() else fp32_path
 
         providers = (
@@ -44,7 +44,7 @@ class QAEngine:
         opts.intra_op_num_threads = 4
 
         self.session = ort.InferenceSession(str(model_path), opts, providers=providers)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_dir.parent / "xr_qa_onnx")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_dir.parent / "qa_onnx")
         self._window: collections.deque = collections.deque(maxlen=200)
         print(f"{model_path.name} loaded | {self.session.get_providers()}")
 
@@ -85,7 +85,7 @@ class QAEngine:
                         best_answer = context[offsets[s][0]: offsets[e][1]]
 
         t_inf = time.perf_counter()
-        answer_text = best_answer.strip() or "No answer found."
+        answer_text = best_answer.strip() or ""
         t_end = time.perf_counter()
 
         rec = _Record(
@@ -116,5 +116,4 @@ class QAEngine:
         }
 
 
-# backwards-compat alias used by gradio_app and earlier imports
-XRQAEngine = QAEngine
+XRQAEngine = QAEngine  # kept for any old imports

@@ -3,7 +3,7 @@
 # Sets up Docker, AWS CLI v2, ECR credential helper, and the deploy script.
 set -euo pipefail
 
-APP_DIR="/opt/xr-qa"
+APP_DIR="/opt/docpilot"
 DEPLOY_USER="ec2-user"   # change to "ubuntu" on Ubuntu AMIs
 
 # ── Docker ────────────────────────────────────────────────────────────────────

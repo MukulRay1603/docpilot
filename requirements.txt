@@ -1,31 +1,36 @@
-# ──────────────────────────────────────────────────────────────────
-# Full local dev requirements
-# Python 3.12 | RTX 3060 laptop (6 GB VRAM) | Driver CUDA 13.2
+# Python 3.12 | RTX 3060 (CUDA 12.8) tested
 #
-# Install PyTorch FIRST with the CUDA 12.8 index:
+# Install PyTorch first (needs the CUDA index):
 #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 #
-# Then install the rest:
+# Then:
 #   pip install -r requirements.txt
-# ──────────────────────────────────────────────────────────────────
 
-# HuggingFace stack – Python 3.12 + PyTorch 2.x tested
+# HuggingFace
 transformers==4.51.3
 datasets==3.5.0
 accelerate==1.6.0
 tokenizers>=0.21.0
 
-# ONNX export + INT8 quantization
+# ONNX export + quantization
 onnx==1.17.0
-onnxruntime-gpu==1.21.0      # CUDA 12.x + Python 3.12 wheel on PyPI
-onnxscript>=0.1.0             # required by torch.onnx in PyTorch 2.9+
+onnxruntime-gpu==1.21.0   # CUDA 12.x wheel; swap for onnxruntime (CPU-only) if no GPU
+onnxscript>=0.1.0          # needed by torch.onnx in PyTorch 2.9+
 
-# Serve
+# Serving
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 pydantic==2.11.3
 
-# Utils
+# Core
 numpy>=1.26.0,<3.0
 rank-bm25==0.2.2
 gradio>=4.44.0
+
+# Document ingestion (optional -- only needed for ingest.py)
+pdfplumber>=0.10.0         # PDF text extraction
+python-docx>=1.1.0         # .docx support
+# requests beautifulsoup4  # uncomment for URL ingestion
+
+# Semantic retrieval (optional -- only needed with USE_SEMANTIC=1)
+# sentence-transformers>=2.7.0

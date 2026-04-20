@@ -1,18 +1,17 @@
 """
-Fine-tune a transformer for extractive QA on the XR corpus.
+Fine-tune a transformer for extractive QA on the demo corpus.
 
 Works on:
-  - Google Colab Pro  (change DEVICE to 'cuda' automatically)
-  - Local RTX 3060    (CUDA detected automatically)
-  - CPU fallback
+  - Local RTX 3060 / any CUDA GPU (detected automatically)
+  - CPU fallback (slow, but it works)
 
 Usage:
     pip install -r train/requirements.txt
-    python data/generate_corpus.py          # build data first
+    python data/build_demo_corpus.py    # build the corpus first
     python train/train.py
 
 Outputs:
-    models/xr_qa_finetuned/   – HuggingFace model dir (PyTorch weights)
+    models/qa_finetuned/   -- HuggingFace model dir (PyTorch weights)
 """
 
 import json
@@ -36,8 +35,8 @@ import collections
 # Config
 # ---------------------------------------------------------------------------
 BASE_MODEL = "deepset/roberta-base-squad2"   # already SQuAD-tuned; great starting point
-DATA_PATH = Path(__file__).parent.parent / "data" / "xr_qa_squad.json"
-OUTPUT_DIR = Path(__file__).parent.parent / "models" / "xr_qa_finetuned"
+DATA_PATH  = Path(__file__).parent.parent / "data"   / "qa_dataset.json"
+OUTPUT_DIR = Path(__file__).parent.parent / "models" / "qa_finetuned"
 
 MAX_LENGTH = 384
 DOC_STRIDE = 128

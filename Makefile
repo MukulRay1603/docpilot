@@ -1,31 +1,41 @@
 PYTHON := python
 PIP    := pip
 
-.PHONY: install corpus train export quantize serve ui all clean
+.PHONY: install demo-corpus train export quantize benchmark serve ui all clean
 
 install:
 	$(PIP) install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 	$(PIP) install -r requirements.txt
 
-corpus:
-	$(PYTHON) data/generate_corpus.py
+# Build the demo corpus (XR/remote-assist domain)
+demo-corpus:
+	$(PYTHON) data/build_demo_corpus.py
 
+# Fine-tune on whatever corpus.json + qa_dataset.json are in data/
 train:
 	$(PYTHON) train/train.py
 
+# Export fine-tuned PyTorch model to ONNX FP32
 export:
 	$(PYTHON) quantize/export_onnx.py
 
+# INT8 quantize + run latency benchmark (FP32 CPU vs INT8 CPU, GPU if available)
 quantize:
 	$(PYTHON) quantize/quantize_int8.py
 
+# Ingest your own documents into corpus.json
+# Usage: make ingest SOURCE=path/to/docs/
+ingest:
+	$(PYTHON) ingest.py --source $(SOURCE) --output data/corpus.json
+
 serve:
-	uvicorn serve.app:app --host 0.0.0.0 --port 8000
+	uvicorn serve.app:app --host 0.0.0.0 --port 8000 --workers 4
 
 ui:
 	$(PYTHON) gradio_app.py
 
-all: corpus train export quantize
+# Full pipeline from scratch
+all: demo-corpus train export quantize
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

@@ -4,8 +4,8 @@ Export the fine-tuned QA model to ONNX.
 Usage:
     python quantize/export_onnx.py
 
-Input:  models/xr_qa_finetuned/
-Output: models/xr_qa_onnx/model.onnx
+Input:  models/qa_finetuned/
+Output: models/qa_onnx/model.onnx
 """
 
 import sys
@@ -17,8 +17,8 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForQuestionAnswering, AutoTokenizer
 
-MODEL_DIR = Path(__file__).parent.parent / "models" / "xr_qa_finetuned"
-ONNX_DIR = Path(__file__).parent.parent / "models" / "xr_qa_onnx"
+MODEL_DIR = Path(__file__).parent.parent / "models" / "qa_finetuned"
+ONNX_DIR = Path(__file__).parent.parent / "models" / "qa_onnx"
 ONNX_PATH = ONNX_DIR / "model.onnx"
 MAX_LENGTH = 384
 
