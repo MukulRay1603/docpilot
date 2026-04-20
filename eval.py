@@ -11,7 +11,6 @@ Outputs F1 and EM across all 96 QA pairs from the demo corpus.
 
 import argparse
 import json
-import re
 import string
 import sys
 from pathlib import Path
@@ -19,9 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
-from config import MODEL_DIR, CORPUS_PATH, CHROMA_DIR
-from serve.inference import QAEngine
-from serve.retrieval import Retriever
+from config import MODEL_DIR, CORPUS_PATH, CHROMA_DIR  # noqa: E402
+from serve.inference import QAEngine  # noqa: E402
+from serve.retrieval import Retriever  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

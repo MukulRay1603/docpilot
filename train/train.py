@@ -15,7 +15,6 @@ Outputs:
 """
 
 import json
-import os
 from pathlib import Path
 
 import torch
@@ -158,7 +157,8 @@ def preprocess_validation(examples, tokenizer):
 # Metric (F1 + EM)
 # ---------------------------------------------------------------------------
 def normalize_answer(s: str) -> str:
-    import re, string
+    import re
+    import string
     s = s.lower()
     s = re.sub(r"\b(a|an|the)\b", " ", s)
     s = "".join(ch for ch in s if ch not in set(string.punctuation))

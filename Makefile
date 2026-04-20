@@ -29,7 +29,7 @@ ingest:
 	$(PYTHON) ingest.py --source $(SOURCE) --output data/corpus.json
 
 serve:
-	uvicorn serve.app:app --host 0.0.0.0 --port 8000 --workers 4 --reload
+	uvicorn serve.app:app --host 0.0.0.0 --port 8000 --reload
 
 ui:
 	$(PYTHON) gradio_app.py

@@ -25,3 +25,6 @@ sentence-transformers>=3.0.0
 
 # Groq synthesis
 groq>=0.11.0
+
+# .env loading
+python-dotenv>=1.0.0

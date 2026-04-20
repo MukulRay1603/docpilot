@@ -164,7 +164,7 @@ def t_auth_require_role_factory():
 # ── groq_synthesizer.py ───────────────────────────────────────────────────────
 
 def t_groq_import():
-    from serve.groq_synthesizer import is_available, cache_stats, synthesize
+    from serve.groq_synthesizer import is_available, cache_stats
     avail = is_available()
     stats = cache_stats()
     print(f"     (Groq available: {avail})", end="")
@@ -191,7 +191,7 @@ def t_groq_complexity_routing():
 
 def t_retrieval_bm25():
     try:
-        from serve.retrieval import Retriever, _tok
+        from serve.retrieval import Retriever
     except ImportError as e:
         print(f"     (skipped — missing dep: {e})", end="")
         return
@@ -226,7 +226,6 @@ def t_tokenizer():
 # ── Optional: model loading ───────────────────────────────────────────────────
 
 def t_model_load():
-    from pathlib import Path
     from config import MODEL_DIR
     int8 = MODEL_DIR / "model_int8.onnx"
     fp32 = MODEL_DIR.parent / "qa_onnx" / "model.onnx"

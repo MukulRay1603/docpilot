@@ -1,6 +1,12 @@
 import os
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 ROOT = Path(__file__).parent
 
 MODEL_DIR   = Path(os.getenv("MODEL_DIR",   str(ROOT / "models" / "qa_int8")))
