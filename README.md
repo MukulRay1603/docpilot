@@ -111,9 +111,9 @@ curl -X POST http://localhost:8000/answer/corpus \
 | Training set | ~96 QA pairs (synthetic, SQuAD v2.0 format) |
 | ONNX FP32 | ~479 MB |
 | ONNX INT8 | ~120 MB |
-| **FP32 CPU P95** | ~185 ms (i9-11900H) |
-| **INT8 CPU P95** | ~62 ms (i9-11900H, ~3x speedup) |
-| **FP32 GPU P95** | ~18 ms (RTX 3060) |
+| **FP32 CPU P95** | 248 ms (i9-11900H, 4 threads) |
+| **INT8 CPU P95** | 120 ms (i9-11900H, 4 threads, **2x speedup**) |
+| **GPU** | requires cuDNN 9.x; see `quantize/quantize_int8.py` to benchmark your hardware |
 
 Run `python quantize/quantize_int8.py` to reproduce latency numbers on your hardware.
 
@@ -138,6 +138,30 @@ The `deploy/` folder has scripts for a blue/green zero-downtime deployment to AW
 This requires an EC2 instance with Docker and Nginx, an ECR repository, and an IAM role with appropriate permissions. The GitHub Actions workflow in `.github/workflows/ci_cd.yml` has commented-out steps showing how to wire up the push and deploy automatically.
 
 AWS isn't required to run the project; it's just the deployment target we used for the original XR remote support tool.
+
+
+## Local LLM synthesis (Ollama)
+
+By default, answers are extractive spans from a single passage. With Ollama running locally,
+DocPilot synthesises a full answer from the retrieved passages using a local LLM. Nothing leaves
+the machine -- important for company document systems.
+
+```bash
+# Install Ollama once (https://ollama.ai or: winget install Ollama.Ollama)
+ollama pull llama3.2    # 2GB, fast on RTX 3060
+# or: ollama pull mistral  # 4GB, better reasoning
+
+# Then just run the UI normally
+python gradio_app.py
+```
+
+When Ollama is running, the answer type shows `synthesised (Ollama)` in the UI.
+When it's not running, it silently falls back to `extracted (RoBERTa)`.
+The synthesis prompt strictly limits the LLM to the retrieved passages -- it cannot
+use training knowledge to fill in gaps. This matters for enterprise deployments where
+hallucinated part numbers or torque specs are worse than "I don't know."
+
+Override the model with `OLLAMA_MODEL=mistral` env var.
 
 ## Retrieval quality
 

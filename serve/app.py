@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from config import MODEL_DIR, CORPUS_PATH, SCORE_THRESHOLD
 from serve.inference import QAEngine
 from serve.retrieval import Retriever
+from serve.synthesizer import synthesize, is_available as ollama_up
 
 engine: Optional[QAEngine] = None
 corpus: list[dict] = []
@@ -50,6 +51,7 @@ class AnswerResponse(BaseModel):
     answer: str
     score: float
     confident: bool
+    answer_type: str = "extracted"  # extracted | synthesised | none
     context_used: Optional[str] = None
     sources: list[str] = []
     latency: dict
@@ -66,6 +68,7 @@ def health():
         "status": "ok",
         "model_loaded": engine is not None,
         "corpus_size": len(corpus),
+        "synthesis": "ollama" if ollama_up() else "extractive_only",
     }
 
 
@@ -113,10 +116,24 @@ def answer_from_corpus(req: CorpusRequest):
     result = engine.answer(req.question, context)
     confident = result["score"] >= SCORE_THRESHOLD
 
+    # Try local LLM synthesis first (Ollama, if running).
+    # The synthesis prompt is strictly grounded in the retrieved passages --
+    # no outside knowledge, no hallucination. Falls back to extractive on None.
+    passage_texts = [p["text"] for p in passages]
+    synth = synthesize(req.question, passage_texts)
+
+    if synth:
+        answer, answer_type = synth, "synthesised"
+    elif confident and result["answer"]:
+        answer, answer_type = result["answer"], "extracted"
+    else:
+        answer, answer_type = "No confident answer found in the corpus.", "none"
+
     return AnswerResponse(
-        answer=result["answer"] if confident else "No confident answer found in the corpus.",
+        answer=answer,
         score=result["score"],
         confident=confident,
+        answer_type=answer_type,
         context_used=context[:500] + "..." if len(context) > 500 else context,
         sources=sources,
         latency=result["latency"],

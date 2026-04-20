@@ -11,6 +11,9 @@ models/
 data/corpus.json
 data/qa_dataset.json
 
+# ChromaDB vector index (rebuilt from corpus.json on first run)
+data/chroma_db/
+
 # Secrets
 .env
 *.pem

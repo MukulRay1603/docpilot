@@ -6,6 +6,7 @@ import gradio as gr
 from config import MODEL_DIR, CORPUS_PATH, SCORE_THRESHOLD
 from serve.inference import QAEngine
 from serve.retrieval import Retriever
+from serve.synthesizer import synthesize, is_available as ollama_up
 from ingest import ingest_file
 
 engine = QAEngine(MODEL_DIR)
