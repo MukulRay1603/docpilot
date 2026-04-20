@@ -1,7 +1,7 @@
 PYTHON := python
 PIP    := pip
 
-.PHONY: install demo-corpus train export quantize benchmark serve ui all clean
+.PHONY: install demo-corpus train export quantize benchmark serve ui smoke all clean
 
 install:
 	$(PIP) install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
@@ -29,10 +29,14 @@ ingest:
 	$(PYTHON) ingest.py --source $(SOURCE) --output data/corpus.json
 
 serve:
-	uvicorn serve.app:app --host 0.0.0.0 --port 8000 --workers 4
+	uvicorn serve.app:app --host 0.0.0.0 --port 8000 --workers 4 --reload
 
 ui:
 	$(PYTHON) gradio_app.py
+
+# Smoke test — no model files required for most tests
+smoke:
+	$(PYTHON) -m tests.smoke_test
 
 # Full pipeline from scratch
 all: demo-corpus train export quantize

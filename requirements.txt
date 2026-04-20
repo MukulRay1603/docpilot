@@ -1,41 +1,48 @@
-# Python 3.12 | RTX 3060 (CUDA 12.8) tested
+# Python 3.12 | tested on RTX 3060 (CUDA 12.8) and CPU-only
 #
 # Install PyTorch first (needs the CUDA index):
 #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# CPU-only:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 #
 # Then:
 #   pip install -r requirements.txt
 
-# HuggingFace
+# ── HuggingFace ─────────────────────────────────────────────────────────────
 transformers==4.51.3
 datasets==3.5.0
 accelerate==1.6.0
 tokenizers>=0.21.0
 
-# ONNX export + quantization
+# ── ONNX export + quantization ───────────────────────────────────────────────
 onnx==1.17.0
-onnxruntime-gpu==1.21.0   # CUDA 12.x wheel; swap for onnxruntime (CPU-only) if no GPU
-onnxscript>=0.1.0          # needed by torch.onnx in PyTorch 2.9+
+onnxruntime-gpu==1.21.0   # CUDA 12.x; swap for `onnxruntime` if CPU-only
+onnxscript>=0.1.0
 
-# Serving
+# ── Serving ──────────────────────────────────────────────────────────────────
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 pydantic==2.11.3
 
-# Core
+# ── Core ─────────────────────────────────────────────────────────────────────
 numpy>=1.26.0,<3.0
 rank-bm25==0.2.2
 gradio>=4.44.0
 
-# Document ingestion (optional -- only needed for ingest.py)
-pdfplumber>=0.10.0         # PDF text extraction
-python-docx>=1.1.0         # .docx support
-# requests beautifulsoup4  # uncomment for URL ingestion
+# ── Document ingestion ───────────────────────────────────────────────────────
+pdfplumber>=0.10.0
+python-docx>=1.1.0
+# beautifulsoup4 httpx   # uncomment for URL ingestion
 
-# Hybrid retrieval (chromadb + sentence-transformers, now default)
+# ── Hybrid retrieval (BGE embeddings + cross-encoder reranking) ──────────────
 chromadb>=1.0.0
-sentence-transformers>=2.7.0
+sentence-transformers>=3.0.0   # includes CrossEncoder; pulls in BAAI/bge-small-en-v1.5
 
-# Local LLM synthesis (optional -- only needed with Ollama running)
+# ── Groq synthesis (replaces local Ollama) ───────────────────────────────────
+groq>=0.11.0
+
+# ── Form data (required by FastAPI /corpus/ingest) ───────────────────────────
+python-multipart>=0.0.9
+
+# ── HTTP client (used by ingest URL mode and health checks) ──────────────────
 httpx>=0.27.0
-# Install Ollama separately from https://ollama.ai

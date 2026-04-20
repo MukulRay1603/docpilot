@@ -5,208 +5,283 @@ colorFrom: indigo
 colorTo: purple
 sdk: gradio
 sdk_version: "4.44.0"
-app_file: gradio_app.py
+app_file: app.py
 pinned: false
-license: mit
 ---
 
-# DocPilot
+# DocPilot — Secure Document Intelligence
 
-Extractive QA over your own document corpus. You bring the documents, DocPilot retrieves relevant passages and extracts the answer span using a fine-tuned RoBERTa model running on ONNX Runtime.
+> Fine-tuned extractive QA · BGE retrieval · Cross-encoder reranking · Groq synthesis · Enterprise security layer
 
-Originally built as a remote support tool for an XR company. Field technicians needed to query device manuals and maintenance procedures hands-free while working. This is a cleaned-up, domain-agnostic version of that system.
+DocPilot is a production-ready document question-answering system built for high-trust environments. Ask natural-language questions against any corpus of PDFs, Markdown, DOCX, or plain text files — every query passes through a multi-layer security pipeline before reaching the model.
 
-## What it does
+Originally built as an XR remote-assist tool where field technicians needed hands-free access to device manuals. Rebuilt as a domain-agnostic, enterprise-grade platform.
 
-1. You ingest documents (PDF, TXT, MD, DOCX) into a passage corpus using `ingest.py`
-2. At query time, hybrid BM25 + semantic retrieval (RRF) finds the most relevant passages
-3. A fine-tuned RoBERTa model extracts the answer span from the retrieved context
-4. Optionally, a local LLM (Ollama) synthesises a full answer from the retrieved passages
-5. The answer and source passages are returned via REST API or Gradio UI
-
-The demo ships with a synthetic corpus covering XR hardware topics (display optics, tracking, rendering, spatial audio, networking, ML inference, enterprise deployment). Replace it with your own documents.
+---
 
 ## Architecture
 
 ```
-Your documents (PDF / TXT / MD / DOCX)
-        ↓  ingest.py
-corpus.json  (passages with source metadata)
-        ↓  at query time
-BM25 (keyword) + ChromaDB (semantic)  →  RRF fusion  →  top-k passages
-        ↓
-RoBERTa QA model (ONNX INT8)  →  answer span
-        ↓  (if Ollama running)
-llama3.2 synthesis  →  grounded full answer
-        ↓
-FastAPI  /  Gradio UI
+User Query
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│  Security Gate                                  │
+│  • Prompt injection detection (10+ patterns)    │
+│  • Input sanitization                           │
+│  • RBAC (X-API-Key: viewer / editor / admin)    │
+└───────────────────────┬─────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────┐
+│  Hybrid Retrieval                               │
+│  BM25 (sparse) ──┐                              │
+│                  ├─► RRF Fusion ─► top-20       │
+│  BGE-small-en    │                   │          │
+│  + ChromaDB ─────┘                   ▼          │
+│                          Cross-Encoder Rerank   │
+│                          ms-marco-MiniLM-L-6    │
+└───────────────────────┬─────────────────────────┘
+                        │ top-k passages
+                        ▼
+┌─────────────────────────────────────────────────┐
+│  ONNX INT8 Extractive QA                        │
+│  deepset/roberta-base-squad2 → ONNX → INT8      │
+│  span extraction + confidence score             │
+└───────────────────────┬─────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────┐
+│  Groq Synthesis  (confidence-gated)             │
+│  • High confidence → return extractive span     │
+│  • Low confidence  → llama-3.1-8b-instant       │
+│  • Complex query   → llama-3.3-70b-versatile    │
+│  • LRU cache (500 entries) · retry + backoff    │
+└───────────────────────┬─────────────────────────┘
+                        │
+                        ▼
+┌─────────────────────────────────────────────────┐
+│  Grounding Verifier + Audit Logger              │
+│  token-overlap grounding score · SQLite trail   │
+└─────────────────────────────────────────────────┘
 ```
 
-## Quick start
+---
 
-### 1. Install PyTorch (GPU)
+## Features
 
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-```
+### Retrieval Pipeline
+| Stage | Component | Why |
+|---|---|---|
+| Sparse | BM25 (`rank-bm25`) | Exact keyword and technical term matching |
+| Dense | `BAAI/bge-small-en-v1.5` + ChromaDB | Paraphrase and synonym queries |
+| Fusion | Reciprocal Rank Fusion (α = 0.5) | Combines sparse + dense rankings parameter-free |
+| Rerank | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Precision pass — reads query + passage jointly |
 
-### 2. Install dependencies
+### Inference
+- **Extractive QA**: `deepset/roberta-base-squad2` fine-tuned on a domain-specific SQuAD v2.0 corpus, exported to **ONNX FP32** then dynamically quantized to **INT8** — 4× size reduction, 2–3× CPU speedup
+- **Synthesis**: Groq API with intelligent model routing — `llama-3.1-8b-instant` for fast/simple queries, `llama-3.3-70b-versatile` for complex ones, in-process LRU cache (500 entries), exponential back-off on rate limits, silent fallback to extractive
 
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Build the demo corpus and run the full training pipeline
-
-```bash
-make all       # demo-corpus → train → export → quantize
-```
-
-Or step by step:
-
-```bash
-python data/build_demo_corpus.py   # writes data/corpus.json + data/qa_dataset.json
-python train/train.py              # fine-tunes RoBERTa, writes models/qa_finetuned/
-python quantize/export_onnx.py     # ONNX FP32, writes models/qa_onnx/model.onnx
-python quantize/quantize_int8.py   # INT8 quantize + latency benchmark
-```
-
-### 4. Serve
-
-```bash
-make serve     # FastAPI on :8000
-make ui        # Gradio on :7860
-```
-
-### 5. Use your own corpus
-
-```bash
-python ingest.py --source path/to/your/docs/   # folder of PDFs / TXT / MD
-python ingest.py --source manual.pdf           # single file
-python ingest.py --source https://...          # web page (needs: pip install requests beautifulsoup4)
-```
-
-Or use the "Your Corpus" tab in the Gradio UI to add text or upload files without restarting.
-
-## API
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/answer` | QA with explicit context string |
-| `POST` | `/answer/corpus` | BM25 retrieval from corpus + QA |
-| `POST` | `/corpus/ingest` | Add text to the running corpus (form: `text`, `source`) |
-| `GET`  | `/corpus/stats` | Passage counts by topic/source |
-| `GET`  | `/health` | Liveness check |
-| `GET`  | `/metrics` | Inference latency percentiles (p50/p95/p99) |
-
-```bash
-curl -X POST http://localhost:8000/answer/corpus \
-  -H "Content-Type: application/json" \
-  -d '{"question": "How does INT8 quantization reduce latency?", "top_k": 3}'
-```
-
-## Model and performance
-
-| | |
+### Security Layer
+| Feature | Detail |
 |---|---|
-| Base model | `deepset/roberta-base-squad2` |
-| Max sequence length | 384 tokens |
-| Training set | ~96 QA pairs (synthetic, SQuAD v2.0 format) |
-| ONNX FP32 | ~479 MB |
-| ONNX INT8 | ~120 MB |
-| **FP32 CPU P95** | 248 ms (i9-11900H, 4 threads) |
-| **INT8 CPU P95** | 120 ms (i9-11900H, 4 threads, **2x speedup**) |
-| **GPU** | requires cuDNN 9.x; see `quantize/quantize_int8.py` to benchmark your hardware |
-| **F1 (gold context)** | 71.1% on 96-example demo corpus |
-| **EM (gold context)** | 38.5% on 96-example demo corpus |
-| **F1 (end-to-end, retrieval top-5)** | 67.0% |
-| **EM (end-to-end, retrieval top-5)** | 37.5% |
+| **Prompt injection defence** | 10+ pattern classes: instruction overrides, role hijacking, persona substitution, XML injection, CRLF delimiter injection, token manipulation, jailbreaks |
+| **Two attack surfaces** | User query surface *and* document content (indirect / second-order injection) |
+| **PII redaction at ingestion** | Emails, phones, SSNs, UK NINs, credit cards, IP addresses, AWS access keys, Stripe keys, GitHub tokens, JWTs — stripped before entering the corpus |
+| **Grounding verification** | Token-overlap score on every synthesized answer — flags answers that stray from retrieved passages |
+| **Audit trail** | SQLite log of every query: question hash, answer type, model used, confidence, grounding, latency, IP, security flags |
+| **RBAC** | `X-API-Key` header with `viewer` / `editor` / `admin` roles; `REQUIRE_AUTH=1` to enforce |
 
-Numbers measured with `python eval.py` on the demo corpus. "Gold context" passes the exact source passage directly to the model (upper bound). "End-to-end" includes hybrid retrieval; the ~4% F1 gap reflects retrieval misses.
+### Interfaces
+- **Web UI** — custom SPA served by FastAPI (`GET /`): animated pipeline visualization, model routing badges, security lab with live injection tester and PII redactor, audit log dashboard
+- **Gradio UI** — `gradio_app.py`, deployable to Hugging Face Spaces via `app.py`
+- **REST API** — FastAPI with OpenAPI docs at `/docs`
 
-Run `python quantize/quantize_int8.py` to reproduce latency on your hardware. Run `python eval.py --no-retrieval` for model-ceiling numbers, `python eval.py` for end-to-end.
+---
 
-The training set is small (synthetic demo data). The base model already does well on extractive QA from SQuAD pre-training; fine-tuning on domain data helps mainly with domain-specific terminology.
+## Performance
 
-## Deployment
+| Metric | Value | Notes |
+|---|---|---|
+| INT8 model size | **120 MB** | vs 479 MB FP32 — 4× compression |
+| P95 latency (CPU, INT8) | **~120 ms** | i9-11900H, 4 threads |
+| P95 latency (CPU, FP32) | ~248 ms | 2× slower baseline |
+| F1 — gold context | **71.1%** | extractive model upper bound |
+| EM — gold context | **38.5%** | |
+| F1 — end-to-end (top-5) | **67.0%** | with BM25+dense retrieval |
+| Groq 8b cost per query | ~$0.000035 | free tier: 30 req/min |
+| Groq 70b cost per query | ~$0.0005 | only for complex/uncertain queries |
 
-### Docker (local)
+---
+
+## Quick Start
+
+```bash
+# 1. Clone and create venv
+git clone https://github.com/MukulRay1603/docpilot
+cd docpilot
+python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 2. Install PyTorch (CUDA) then deps
+pip install torch --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt
+
+# 3. Set your Groq API key
+cp .env.example .env
+# edit .env → add GROQ_API_KEY=gsk_...
+
+# 4. Build demo corpus and run the full pipeline
+make demo-corpus   # generates data/corpus.json + qa_dataset.json
+make train         # fine-tunes roberta-base-squad2
+make export        # PyTorch → ONNX FP32
+make quantize      # INT8 quantization + latency benchmark
+
+# 5. Launch
+make serve         # FastAPI + Web UI on :8000
+make ui            # Gradio on :7860 (optional)
+```
+
+**Smoke test** (no model files required for most tests):
+```bash
+make smoke
+```
+
+**Bring your own corpus** (skip training):
+```bash
+python ingest.py --source your_docs/ --output data/corpus.json
+make serve
+```
+
+---
+
+## API Reference
+
+All endpoints accept/return JSON. Optional auth header: `X-API-Key: <key>` (only enforced when `REQUIRE_AUTH=1`).
+
+### Query
+```http
+POST /answer/corpus
+Content-Type: application/json
+
+{"question": "How does INT8 quantization reduce latency?", "top_k": 5}
+```
+```json
+{
+  "answer": "INT8 quantization reduces weight storage from 32 bits...",
+  "answer_type": "groq-8b",
+  "grounding": 0.87,
+  "score": -1.24,
+  "confident": true,
+  "sources": ["ml_inference"],
+  "security": {"safe": true},
+  "latency": {"retrieval_ms": 18, "qa_ms": 95, "synthesis_ms": 312, "total_ms": 425}
+}
+```
+
+`answer_type` values: `extracted` · `groq-8b` · `groq-70b` · `cached` · `none`
+
+```http
+POST /answer
+{"question": "...", "context": "paste any text here"}
+```
+
+### Corpus
+```http
+POST /corpus/ingest   # add text at runtime (editor role)
+GET  /corpus/stats    # passages by topic/source
+```
+
+### Security (demo endpoints)
+```http
+POST /security/check           # injection check — query surface
+POST /security/check-document  # injection check — document surface
+POST /security/redact          # PII detection + redaction
+```
+
+### Admin
+```http
+GET /audit/logs      # recent queries          (admin role)
+GET /audit/security  # security events         (admin role)
+GET /audit/stats     # totals + flagged counts (admin role)
+GET /health          # model, corpus, synthesis status
+GET /metrics         # P50/P95/P99 latency percentiles
+GET /docs            # OpenAPI interactive docs
+```
+
+---
+
+## Project Structure
+
+```
+docpilot/
+├── serve/
+│   ├── app.py              # FastAPI — all endpoints, security gate, CORS
+│   ├── inference.py        # ONNX Runtime QA engine (sliding window, latency tracking)
+│   ├── retrieval.py        # BM25 + BGE dense + RRF + cross-encoder reranker
+│   ├── groq_synthesizer.py # Tiered Groq synthesis, LRU cache, retry/backoff
+│   ├── security.py         # Injection detection, PII redaction, grounding score
+│   ├── audit.py            # SQLite audit trail
+│   └── auth.py             # RBAC API key authentication
+├── train/
+│   └── train.py            # Fine-tune roberta-base-squad2 on SQuAD v2.0 data
+├── quantize/
+│   ├── export_onnx.py      # PyTorch → ONNX FP32 (opset 14)
+│   └── quantize_int8.py    # Dynamic INT8 quantization + benchmark
+├── data/
+│   └── build_demo_corpus.py # Synthetic XR domain corpus (85 passages, ~96 QA pairs)
+├── ui/
+│   └── index.html          # Custom SPA web UI (Tailwind CDN + vanilla JS)
+├── tests/
+│   └── smoke_test.py       # 20-test suite; model-free for all security/audit/groq tests
+├── ingest.py               # PDF / TXT / MD / DOCX / URL → corpus.json
+├── gradio_app.py           # Gradio UI (5 tabs incl. Security Lab + Audit Log)
+├── app.py                  # HF Spaces entry point
+├── eval.py                 # F1 / EM evaluation (with and without retrieval)
+├── config.py               # Central env-var configuration
+├── Makefile                # install · demo-corpus · train · export · quantize · serve · ui · smoke
+├── Dockerfile
+└── docker-compose.yml
+```
+
+---
+
+## Docker
 
 ```bash
 docker compose up --build
+# FastAPI + Web UI available at :8000
 ```
 
-### Production
-
-The `deploy/` folder has scripts for a blue/green zero-downtime deployment to AWS EC2 via ECR. The pattern is:
-
-1. Build and push Docker image to a container registry (ECR, GHCR, etc.)
-2. On the EC2 instance, run `deploy/deploy.sh <IMAGE_URI>`
-3. The script starts a "green" container, health-checks it, switches Nginx upstream, then stops the old "blue" container
-
-This requires an EC2 instance with Docker and Nginx, an ECR repository, and an IAM role with appropriate permissions. The GitHub Actions workflow in `.github/workflows/ci_cd.yml` has commented-out steps showing how to wire up the push and deploy automatically.
-
-AWS isn't required to run the project; it's just the deployment target we used for the original XR remote support tool.
-
-
-## Local LLM synthesis (Ollama)
-
-By default, answers are extractive spans from a single passage. With Ollama running locally,
-DocPilot synthesises a full answer from the retrieved passages using a local LLM. Nothing leaves
-the machine -- important for company document systems.
-
+Pass the Groq key:
 ```bash
-# Install Ollama once (https://ollama.ai or: winget install Ollama.Ollama)
-ollama pull llama3.2    # 2GB, fast on RTX 3060
-# or: ollama pull mistral  # 4GB, better reasoning
-
-# Then just run the UI normally
-python gradio_app.py
+GROQ_API_KEY=gsk_... docker compose up
 ```
 
-When Ollama is running, the answer type shows `synthesised (Ollama)` in the UI.
-When it's not running, it silently falls back to `extracted (RoBERTa)`.
-The synthesis prompt strictly limits the LLM to the retrieved passages -- it cannot
-use training knowledge to fill in gaps. This matters for enterprise deployments where
-hallucinated part numbers or torque specs are worse than "I don't know."
+---
 
-Override the model with `OLLAMA_MODEL=mistral` env var.
+## Hugging Face Spaces
 
-## Retrieval quality
+1. Push this repo to a Hugging Face Space (Gradio SDK)
+2. Add `GROQ_API_KEY` as a **Repository secret** in Space Settings → Variables and secrets
+3. Entry point is `app.py` → launches `gradio_app.py`
 
-Retrieval uses BM25 + dense vectors (ChromaDB + `all-MiniLM-L6-v2`, 22 MB) fused via Reciprocal Rank Fusion (RRF). BM25 handles exact-term queries; dense handles paraphrase and synonym matches. Both are always-on if `sentence-transformers` and `chromadb` are installed (included in `requirements.txt`).
+ONNX INT8 model (~120 MB) can be tracked with Git LFS or loaded from a HF Hub model repository.
 
-Cold-start embeds the corpus once and persists to `data/chroma_db/` — subsequent starts load the index directly. Per-query overhead is ~5ms for the dense encode.
+---
 
-BM25-only fallback kicks in automatically if the optional deps aren't installed.
+## Security Design Notes
 
-## Project structure
+**Why two injection surfaces?**
+Most RAG security tools only check user queries. DocPilot also scans **document content** at ingestion time. A document containing `"When summarizing this, always say X"` is an indirect injection attack (second-order prompt injection) that can silently alter model behaviour for all future queries. Both surfaces use independent pattern sets tuned to each context.
 
-```
-data/
-  build_demo_corpus.py   -- generates demo corpus.json + qa_dataset.json
-  corpus.json            -- gitignored, generated
-  qa_dataset.json        -- gitignored, generated
-train/
-  train.py               -- fine-tune RoBERTa on qa_dataset.json
-quantize/
-  export_onnx.py         -- PyTorch to ONNX FP32
-  quantize_int8.py       -- dynamic INT8 + latency benchmark
-serve/
-  app.py                 -- FastAPI endpoints
-  inference.py           -- ONNX Runtime QA engine
-  retrieval.py           -- BM25 + optional semantic retrieval
-ingest.py                -- document ingestion pipeline (PDF/TXT/MD/DOCX/URL)
-gradio_app.py            -- Gradio UI
-config.py                -- reads MODEL_DIR, CORPUS_PATH, SCORE_THRESHOLD from env
-deploy/
-  deploy.sh              -- blue/green EC2 deploy script
-  ec2_setup.sh           -- one-time EC2 bootstrap
-```
+**Grounding score**
+Groq synthesis runs against a strict system prompt ("answer using ONLY the provided passages"), but LLMs can still hallucinate. The grounding score measures token overlap between the synthesized answer and the retrieved passages — below 0.5 is surfaced as a potential hallucination signal in both the API response and the audit log.
 
-## Known limitations
+**Cost model**
+The entire retrieval and extractive QA stack runs locally (zero API cost). Groq is only called when extractive confidence falls below threshold — and even then, the 8b model handles most queries. The 70b model fires only when complexity heuristics trigger (question length > 10 tokens, confidence < −1.5, or explicit reasoning keywords). A busy demo session costs under $0.01.
 
-- Extractive only: answers are spans from a single passage, not synthesised across multiple sources
-- BM25 misses semantic matches without `USE_SEMANTIC=1`
-- The demo corpus is small (43 synthetic passages). Real deployments need real documents.
-- No conversation history, no follow-up questions
+---
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).

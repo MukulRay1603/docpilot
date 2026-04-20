@@ -13,6 +13,10 @@ data/qa_dataset.json
 
 # ChromaDB vector index (rebuilt from corpus.json on first run)
 data/chroma_db/
+data/_smoke_chroma_tmp/
+
+# SQLite audit database (generated at runtime)
+data/audit.db
 
 # Secrets
 .env
