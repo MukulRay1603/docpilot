@@ -1,14 +1,14 @@
-import time
 import collections
+import time
 from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
 from transformers import AutoTokenizer
 
-MAX_LENGTH = 384
-DOC_STRIDE = 128
-N_BEST = 20
+MAX_LENGTH        = 384
+DOC_STRIDE        = 128
+N_BEST            = 20
 MAX_ANSWER_LENGTH = 128
 
 _Record = collections.namedtuple("_Record", ["tokenize_ms", "inference_ms", "decode_ms", "total_ms"])
@@ -30,8 +30,8 @@ ort.InferenceSession.get_inputs_names_ = lambda self: _input_names(self)
 
 class QAEngine:
     def __init__(self, model_dir: Path):
-        int8_path = model_dir / "model_int8.onnx"
-        fp32_path = model_dir.parent / "qa_onnx" / "model.onnx"
+        int8_path  = model_dir / "model_int8.onnx"
+        fp32_path  = model_dir.parent / "qa_onnx" / "model.onnx"
         model_path = int8_path if int8_path.exists() else fp32_path
 
         providers = (
@@ -43,7 +43,7 @@ class QAEngine:
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         opts.intra_op_num_threads = 4
 
-        self.session = ort.InferenceSession(str(model_path), opts, providers=providers)
+        self.session   = ort.InferenceSession(str(model_path), opts, providers=providers)
         self.tokenizer = AutoTokenizer.from_pretrained(model_dir.parent / "qa_onnx")
         self._window: collections.deque = collections.deque(maxlen=200)
         print(f"{model_path.name} loaded | {self.session.get_providers()}")
@@ -68,10 +68,11 @@ class QAEngine:
         enc.pop("overflow_to_sample_mapping", None)
 
         for i in range(enc["input_ids"].shape[0]):
-            feed = {k: enc[k][i: i + 1] for k in self.session.get_inputs_names_()}
-            outputs = self.session.run(None, feed)
-            start_logits, end_logits = outputs[0][0], outputs[1][0]
-            offsets = offset_maps[i]
+            feed         = {k: enc[k][i: i + 1] for k in self.session.get_inputs_names_()}
+            outputs      = self.session.run(None, feed)
+            start_logits = outputs[0][0]
+            end_logits   = outputs[1][0]
+            offsets      = offset_maps[i]
 
             for s in np.argsort(start_logits)[-N_BEST:][::-1]:
                 for e in np.argsort(end_logits)[-N_BEST:][::-1]:
@@ -81,11 +82,10 @@ class QAEngine:
                         continue
                     score = float(start_logits[s]) + float(end_logits[e])
                     if score > best_score:
-                        best_score = score
+                        best_score  = score
                         best_answer = context[offsets[s][0]: offsets[e][1]]
 
         t_inf = time.perf_counter()
-        answer_text = best_answer.strip() or ""
         t_end = time.perf_counter()
 
         rec = _Record(
@@ -95,12 +95,7 @@ class QAEngine:
             total_ms=round((t_end - t0) * 1000, 2),
         )
         self._window.append(rec)
-
-        return {
-            "answer": answer_text,
-            "score": round(best_score, 4),
-            "latency": rec._asdict(),
-        }
+        return {"answer": best_answer.strip(), "score": round(best_score, 4), "latency": rec._asdict()}
 
     def latency_stats(self) -> dict:
         if not self._window:
@@ -108,12 +103,9 @@ class QAEngine:
         totals = sorted(r.total_ms for r in self._window)
         n = len(totals)
         return {
-            "n": n,
-            "p50_ms": totals[n // 2],
-            "p95_ms": totals[int(n * 0.95)],
-            "p99_ms": totals[int(n * 0.99)],
+            "n":       n,
+            "p50_ms":  totals[n // 2],
+            "p95_ms":  totals[int(n * 0.95)],
+            "p99_ms":  totals[int(n * 0.99)],
             "mean_ms": round(sum(totals) / n, 2),
         }
-
-
-XRQAEngine = QAEngine  # kept for any old imports

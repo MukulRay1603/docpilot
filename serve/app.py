@@ -1,17 +1,3 @@
-"""
-DocPilot FastAPI server — secure, production-grade document QA.
-
-Security pipeline per request:
-  1. Auth     — X-API-Key role check (optional, REQUIRE_AUTH=1 to enforce)
-  2. Sanitize — strip control chars, enforce length limits
-  3. Inject   — prompt-injection detection; 400 + audit event on detection
-  4. Retrieve — BM25 + BGE dense + RRF → cross-encoder reranked passages
-  5. Extract  — ONNX DeBERTa/RoBERTa span extraction + confidence score
-  6. Synthesise — Groq (8b or 70b) if available; falls back to extractive
-  7. Ground   — token-overlap grounding score (answer vs retrieved passages)
-  8. Audit    — every query written to SQLite regardless of outcome
-"""
-
 import json
 import time
 from contextlib import asynccontextmanager
@@ -49,13 +35,9 @@ from serve.security import (
     sanitize_input,
 )
 
-# ---------------------------------------------------------------------------
-# Global state (initialised in lifespan)
-# ---------------------------------------------------------------------------
-
-engine:   Optional[QAEngine]  = None
-corpus:   list[dict]          = []
-retriever: Optional[Retriever] = None
+engine:    Optional[QAEngine]   = None
+corpus:    list[dict]           = []
+retriever: Optional[Retriever]  = None
 
 
 @asynccontextmanager
@@ -76,10 +58,6 @@ def _load_corpus(path: Path) -> tuple[list[dict], Retriever]:
     return [], Retriever([])
 
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
-
 app = FastAPI(title="DocPilot", version="3.0.0", lifespan=lifespan)
 
 app.add_middleware(
@@ -89,10 +67,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve the web UI from the ui/ directory
 _UI_DIR = Path(__file__).parent.parent / "ui"
 if _UI_DIR.exists():
     app.mount("/ui", StaticFiles(directory=str(_UI_DIR)), name="ui")
+
 
 @app.get("/", include_in_schema=False)
 def root():
@@ -101,10 +79,6 @@ def root():
         return FileResponse(str(index))
     return {"name": "DocPilot API", "docs": "/docs", "version": "3.0.0"}
 
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
 
 class AnswerRequest(BaseModel):
     question: str
@@ -120,12 +94,12 @@ class AnswerResponse(BaseModel):
     answer:       str
     score:        float
     confident:    bool
-    answer_type:  str = "extracted"   # extracted | groq-8b | groq-70b | cached | none
+    answer_type:  str = "extracted"
     grounding:    float = 1.0
     context_used: Optional[str] = None
     sources:      list[str] = []
-    security:     dict = {}           # {safe, threat_type, matched}
-    latency:      dict = {}           # {retrieval_ms, qa_ms, synthesis_ms, total_ms}
+    security:     dict = {}
+    latency:      dict = {}
 
 
 class IngestResponse(BaseModel):
@@ -135,10 +109,6 @@ class IngestResponse(BaseModel):
     pii_types:    list[str] = []
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _client_ip(request: Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
@@ -147,7 +117,6 @@ def _client_ip(request: Request) -> str:
 
 
 def _guard_question(question: str, ip: str) -> str:
-    """Sanitize + injection-check; raises 400 on threat."""
     q = sanitize_input(question, MAX_QUESTION_LEN)
     result = check_injection(q)
     if not result.safe:
@@ -159,17 +128,13 @@ def _guard_question(question: str, ip: str) -> str:
         raise HTTPException(
             status_code=400,
             detail={
-                "error":      "Prompt injection detected",
-                "threat":     result.threat_type,
-                "matched":    result.matched,
+                "error":   "Prompt injection detected",
+                "threat":  result.threat_type,
+                "matched": result.matched,
             },
         )
     return q
 
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/health")
 def health(_role: str = Depends(get_role)):
@@ -210,9 +175,9 @@ def answer(req: AnswerRequest, request: Request, _role: str = Depends(get_role))
     result = engine.answer(q, req.context)
     qa_ms  = round((time.perf_counter() - t0) * 1000, 1)
 
-    confident = result["score"] >= SCORE_THRESHOLD
+    confident   = result["score"] >= SCORE_THRESHOLD
     answer_text = result["answer"] if confident else "Not enough information in the provided context."
-    g_score = grounding_score(answer_text, [req.context])
+    g_score     = grounding_score(answer_text, [req.context])
 
     log_query(
         question=q, answer=answer_text, answer_type="extracted",
@@ -221,8 +186,7 @@ def answer(req: AnswerRequest, request: Request, _role: str = Depends(get_role))
     )
     return AnswerResponse(
         answer=answer_text, score=result["score"], confident=confident,
-        grounding=g_score,
-        security={"safe": True},
+        grounding=g_score, security={"safe": True},
         latency={**result["latency"], "qa_ms": qa_ms, "total_ms": qa_ms},
     )
 
@@ -237,7 +201,6 @@ def answer_from_corpus(req: CorpusRequest, request: Request, _role: str = Depend
     ip = _client_ip(request)
     q  = _guard_question(req.question, ip)
 
-    # ── Retrieve + rerank ────────────────────────────────────────────────────
     t_ret    = time.perf_counter()
     passages = retriever.retrieve(q, top_k=req.top_k)
     ret_ms   = round((time.perf_counter() - t_ret) * 1000, 1)
@@ -245,22 +208,20 @@ def answer_from_corpus(req: CorpusRequest, request: Request, _role: str = Depend
     context  = " ".join(p["text"] for p in passages)
     sources  = list({p.get("source") or p.get("topic") or "unknown" for p in passages})
 
-    # ── Extractive QA ────────────────────────────────────────────────────────
     t_qa   = time.perf_counter()
     result = engine.answer(q, context)
     qa_ms  = round((time.perf_counter() - t_qa) * 1000, 1)
 
-    confident = result["score"] >= SCORE_THRESHOLD
-
-    # ── Groq synthesis (tiered, cached, graceful fallback) ───────────────────
-    t_synth   = time.perf_counter()
+    confident     = result["score"] >= SCORE_THRESHOLD
     passage_texts = [p["text"] for p in passages]
+
+    t_synth           = time.perf_counter()
     synth, model_label = synthesize(q, passage_texts, confidence=result["score"])
-    synth_ms  = round((time.perf_counter() - t_synth) * 1000, 1)
+    synth_ms          = round((time.perf_counter() - t_synth) * 1000, 1)
 
     if synth:
         final_answer = synth
-        answer_type  = model_label        # "groq-8b" | "groq-70b" | "cached"
+        answer_type  = model_label
     elif confident and result["answer"]:
         final_answer = result["answer"]
         answer_type  = "extracted"
@@ -268,8 +229,8 @@ def answer_from_corpus(req: CorpusRequest, request: Request, _role: str = Depend
         final_answer = "No confident answer found in the corpus."
         answer_type  = "none"
 
-    g_score   = grounding_score(final_answer, passage_texts)
-    total_ms  = round(ret_ms + qa_ms + synth_ms, 1)
+    g_score  = grounding_score(final_answer, passage_texts)
+    total_ms = round(ret_ms + qa_ms + synth_ms, 1)
 
     log_query(
         question=q, answer=final_answer, answer_type=answer_type,
@@ -279,7 +240,6 @@ def answer_from_corpus(req: CorpusRequest, request: Request, _role: str = Depend
                  "synthesis_ms": synth_ms, "total_ms": total_ms},
         ip=ip,
     )
-
     return AnswerResponse(
         answer=final_answer,
         score=result["score"],
@@ -290,10 +250,10 @@ def answer_from_corpus(req: CorpusRequest, request: Request, _role: str = Depend
         sources=sources,
         security={"safe": True},
         latency={
-            "retrieval_ms":  ret_ms,
-            "qa_ms":         qa_ms,
-            "synthesis_ms":  synth_ms,
-            "total_ms":      total_ms,
+            "retrieval_ms": ret_ms,
+            "qa_ms":        qa_ms,
+            "synthesis_ms": synth_ms,
+            "total_ms":     total_ms,
         },
     )
 
@@ -304,14 +264,11 @@ async def ingest_text(
     source: str = Form("upload"),
     _role:  str = Depends(require_role("editor")),
 ):
-    """Add text passages to the running corpus (no restart needed)."""
     global corpus, retriever
 
-    # PII redaction before the text enters the corpus
-    pii = redact_pii(text)
+    pii        = redact_pii(text)
     clean_text = pii.redacted_text
 
-    # Check for indirect injection in document content
     doc_check = check_document_injection(clean_text)
     if not doc_check.safe:
         log_security_event(
@@ -334,7 +291,7 @@ async def ingest_text(
             "No usable chunks. Separate paragraphs with blank lines; each needs >80 chars.",
         )
 
-    start_id    = max((p["id"] for p in corpus), default=-1) + 1
+    start_id     = max((p["id"] for p in corpus), default=-1) + 1
     new_passages = [
         {"id": start_id + i, "source": source, "topic": source, "text": chunk}
         for i, chunk in enumerate(chunks)
@@ -350,44 +307,43 @@ async def ingest_text(
     )
 
 
-# ---------------------------------------------------------------------------
-# Security demo endpoints (used by the web UI Security Lab)
-# ---------------------------------------------------------------------------
-
 class InjectionRequest(BaseModel):
     text: str
 
+
 class InjectionResponse(BaseModel):
-    safe: bool
+    safe:        bool
     threat_type: str = ""
-    matched: str = ""
+    matched:     str = ""
+
 
 class PIIRequest(BaseModel):
     text: str
 
+
 class PIIResponse(BaseModel):
     redacted_text: str
-    found: list[dict]
-    has_pii: bool
+    found:         list[dict]
+    has_pii:       bool
+
 
 @app.post("/security/check", response_model=InjectionResponse)
 def security_check(req: InjectionRequest, request: Request):
-    """Check text for prompt injection (query surface)."""
     q   = sanitize_input(req.text, MAX_QUESTION_LEN)
     res = check_injection(q)
     if not res.safe:
         log_security_event(res.threat_type, f"Demo check: {res.matched!r}", _client_ip(request))
     return InjectionResponse(safe=res.safe, threat_type=res.threat_type, matched=res.matched)
 
+
 @app.post("/security/check-document", response_model=InjectionResponse)
 def security_check_doc(req: InjectionRequest):
-    """Check text for indirect / document-surface injection."""
     res = check_document_injection(req.text[:10_000])
     return InjectionResponse(safe=res.safe, threat_type=res.threat_type, matched=res.matched)
 
+
 @app.post("/security/redact", response_model=PIIResponse)
 def security_redact(req: PIIRequest):
-    """Detect and redact PII from text."""
     result = redact_pii(req.text[:50_000])
     return PIIResponse(
         redacted_text=result.redacted_text,
@@ -395,9 +351,6 @@ def security_redact(req: PIIRequest):
         has_pii=result.has_pii,
     )
 
-# ---------------------------------------------------------------------------
-# Admin endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/audit/logs")
 def audit_logs(n: int = 20, _role: str = Depends(require_role("admin"))):

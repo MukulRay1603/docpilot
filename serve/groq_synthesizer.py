@@ -1,18 +1,3 @@
-"""
-Groq-powered synthesis layer.
-
-Replaces the Ollama synthesizer with a cloud API that:
-  - Needs no local GPU or model download
-  - Runs llama-3.1-8b-instant  (~800 tok/s, high rate limits, free tier friendly)
-  - Escalates to llama-3.3-70b-versatile for complex / uncertain queries
-  - Caches responses in-process (LRU, max 500 entries) to avoid repeat API calls
-  - Retries with exponential back-off on rate-limit errors (429)
-  - Falls back to extractive answer silently when Groq is unavailable
-
-Set GROQ_API_KEY in your environment (or .env).
-Override models via GROQ_MODEL_FAST / GROQ_MODEL_SMART.
-"""
-
 import hashlib
 import os
 import time
@@ -24,17 +9,16 @@ try:
 except ImportError:
     _HAS_GROQ = False
 
-GROQ_API_KEY  = os.getenv("GROQ_API_KEY", "").strip()
-MODEL_FAST    = os.getenv("GROQ_MODEL_FAST",  "llama-3.1-8b-instant")
-MODEL_SMART   = os.getenv("GROQ_MODEL_SMART", "llama-3.3-70b-versatile")
-MAX_TOKENS    = int(os.getenv("GROQ_MAX_TOKENS",   "400"))
-TEMPERATURE   = float(os.getenv("GROQ_TEMPERATURE", "0.1"))
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+MODEL_FAST   = os.getenv("GROQ_MODEL_FAST",  "llama-3.1-8b-instant")
+MODEL_SMART  = os.getenv("GROQ_MODEL_SMART", "llama-3.3-70b-versatile")
+MAX_TOKENS   = int(os.getenv("GROQ_MAX_TOKENS",   "400"))
+TEMPERATURE  = float(os.getenv("GROQ_TEMPERATURE", "0.1"))
 
-_MAX_PASSAGES  = 3      # passages sent to Groq (token budget)
-_MAX_PASS_CHARS = 600   # per-passage char cap
-_CACHE_MAX     = 500    # in-process LRU cache size
+_MAX_PASSAGES  = 3
+_MAX_PASS_CHARS = 600
+_CACHE_MAX     = 500
 
-# Strict grounding prompt — no outside knowledge, cite passages
 _SYSTEM = (
     "You are a precise technical assistant. Answer the user's question using ONLY the "
     "document passages provided below. "
@@ -45,12 +29,8 @@ _SYSTEM = (
 )
 
 _client: Optional[object] = None
-_cache:  dict[str, tuple[str, str]] = {}   # cache_key -> (answer, model_label)
+_cache:  dict[str, tuple[str, str]] = {}
 
-
-# ---------------------------------------------------------------------------
-# Internals
-# ---------------------------------------------------------------------------
 
 def _get_client():
     global _client
@@ -69,7 +49,6 @@ def _cache_key(question: str, passages: list[str]) -> str:
 
 
 def _is_complex(question: str, confidence: float) -> bool:
-    """Route to the smarter 70b model for harder queries."""
     triggers = {
         "explain", "compare", "why", "how does", "difference between",
         "elaborate", "describe", "what causes", "contrast", "trade-off",
@@ -86,7 +65,7 @@ def _is_complex(question: str, confidence: float) -> bool:
 def _build_user_message(question: str, passages: list[str]) -> str:
     limited = passages[:_MAX_PASSAGES]
     context = "\n\n".join(
-        f"[Passage {i + 1}]\n{p[:_MAX_PASS_CHARS]}{'…' if len(p) > _MAX_PASS_CHARS else ''}"
+        f"[Passage {i + 1}]\n{p[:_MAX_PASS_CHARS]}{'...' if len(p) > _MAX_PASS_CHARS else ''}"
         for i, p in enumerate(limited)
     )
     return f"Document passages:\n{context}\n\nQuestion: {question}\n\nAnswer:"
@@ -94,27 +73,14 @@ def _build_user_message(question: str, passages: list[str]) -> str:
 
 def _evict_if_full() -> None:
     if len(_cache) >= _CACHE_MAX:
-        _cache.pop(next(iter(_cache)))  # evict oldest (dict insertion order)
+        _cache.pop(next(iter(_cache)))
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def synthesize(
     question: str,
     passages: list[str],
     confidence: float = 0.0,
 ) -> tuple[str | None, str]:
-    """
-    Generate a grounded answer via Groq.
-
-    Returns:
-        (answer_text, model_label)  on success
-        (None, "")                  when Groq is unavailable or all retries exhausted
-
-    model_label is one of: "groq-8b" | "groq-70b" | "cached"
-    """
     client = _get_client()
     if not client or not passages:
         return None, ""
@@ -147,14 +113,12 @@ def synthesize(
                 _evict_if_full()
                 _cache[key] = (text, label)
                 return text, label
-
             except Exception as exc:
                 err = str(exc).lower()
                 is_rate_limit = "rate" in err or "429" in err or "limit" in err
                 if is_rate_limit and attempt < 2:
-                    time.sleep(2 ** attempt)   # 1s, 2s
+                    time.sleep(2 ** attempt)
                     continue
-                # non-retryable or exhausted — try next model
                 break
 
     return None, ""

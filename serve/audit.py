@@ -1,14 +1,7 @@
-"""
-Audit trail: every query and security event persisted to SQLite.
-
-Designed to be fire-and-forget — audit failures never propagate to callers.
-The DB is created automatically on first write; safe to run without pre-setup.
-"""
-
+import hashlib
 import json
 import sqlite3
 import time
-import hashlib
 from pathlib import Path
 
 _DB_PATH = Path("data/audit.db")
@@ -56,19 +49,19 @@ def _conn() -> sqlite3.Connection:
 
 def log_query(
     *,
-    question: str,
-    answer: str,
-    answer_type: str,
-    model_used: str,
-    confidence: float,
-    grounding: float = 1.0,
-    sources: list[str],
-    latency: dict,
-    ip: str = "",
-    flagged: bool = False,
-    threat_type: str = "",
+    question:     str,
+    answer:       str,
+    answer_type:  str,
+    model_used:   str,
+    confidence:   float,
+    grounding:    float = 1.0,
+    sources:      list[str],
+    latency:      dict,
+    ip:           str = "",
+    flagged:      bool = False,
+    threat_type:  str = "",
     pii_detected: bool = False,
-    pii_types: list[str] | None = None,
+    pii_types:    list[str] | None = None,
 ) -> None:
     try:
         c = _conn()
@@ -103,7 +96,7 @@ def log_query(
         c.commit()
         c.close()
     except Exception:
-        pass  # audit never breaks the request path
+        pass
 
 
 def log_security_event(event_type: str, details: str, ip: str = "") -> None:
@@ -121,7 +114,7 @@ def log_security_event(event_type: str, details: str, ip: str = "") -> None:
 
 def get_recent_queries(n: int = 15) -> list[dict]:
     try:
-        c = _conn()
+        c    = _conn()
         rows = c.execute(
             """SELECT ts, question_preview, answer_type, model_used,
                       confidence, grounding, total_ms, flagged, threat_type
@@ -138,7 +131,7 @@ def get_recent_queries(n: int = 15) -> list[dict]:
                 "confidence": round(r["confidence"], 2),
                 "grounding":  round(r["grounding"], 2),
                 "ms":         round(r["total_ms"] or 0, 1),
-                "flagged":    "⚠" if r["flagged"] else "✓",
+                "flagged":    "!" if r["flagged"] else "ok",
                 "threat":     r["threat_type"] or "",
             }
             for r in rows
@@ -149,7 +142,7 @@ def get_recent_queries(n: int = 15) -> list[dict]:
 
 def get_security_events(n: int = 20) -> list[dict]:
     try:
-        c = _conn()
+        c    = _conn()
         rows = c.execute(
             "SELECT ts, event_type, details, ip FROM security_events ORDER BY ts DESC LIMIT ?",
             (n,),
@@ -170,7 +163,7 @@ def get_security_events(n: int = 20) -> list[dict]:
 
 def stats() -> dict:
     try:
-        c = _conn()
+        c       = _conn()
         total   = c.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
         flagged = c.execute("SELECT COUNT(*) FROM audit_log WHERE flagged=1").fetchone()[0]
         events  = c.execute("SELECT COUNT(*) FROM security_events").fetchone()[0]
