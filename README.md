@@ -19,9 +19,10 @@ Originally built as a remote support tool for an XR company. Field technicians n
 ## What it does
 
 1. You ingest documents (PDF, TXT, MD, DOCX) into a passage corpus using `ingest.py`
-2. At query time, BM25 retrieves the most relevant passages
+2. At query time, hybrid BM25 + semantic retrieval (RRF) finds the most relevant passages
 3. A fine-tuned RoBERTa model extracts the answer span from the retrieved context
-4. The answer and source passages are returned via REST API or Gradio UI
+4. Optionally, a local LLM (Ollama) synthesises a full answer from the retrieved passages
+5. The answer and source passages are returned via REST API or Gradio UI
 
 The demo ships with a synthetic corpus covering XR hardware topics (display optics, tracking, rendering, spatial audio, networking, ML inference, enterprise deployment). Replace it with your own documents.
 
@@ -32,9 +33,11 @@ Your documents (PDF / TXT / MD / DOCX)
         ↓  ingest.py
 corpus.json  (passages with source metadata)
         ↓  at query time
-BM25 retrieval  →  top-k passages
+BM25 (keyword) + ChromaDB (semantic)  →  RRF fusion  →  top-k passages
         ↓
 RoBERTa QA model (ONNX INT8)  →  answer span
+        ↓  (if Ollama running)
+llama3.2 synthesis  →  grounded full answer
         ↓
 FastAPI  /  Gradio UI
 ```
@@ -114,8 +117,14 @@ curl -X POST http://localhost:8000/answer/corpus \
 | **FP32 CPU P95** | 248 ms (i9-11900H, 4 threads) |
 | **INT8 CPU P95** | 120 ms (i9-11900H, 4 threads, **2x speedup**) |
 | **GPU** | requires cuDNN 9.x; see `quantize/quantize_int8.py` to benchmark your hardware |
+| **F1 (gold context)** | 71.1% on 96-example demo corpus |
+| **EM (gold context)** | 38.5% on 96-example demo corpus |
+| **F1 (end-to-end, retrieval top-5)** | 67.0% |
+| **EM (end-to-end, retrieval top-5)** | 37.5% |
 
-Run `python quantize/quantize_int8.py` to reproduce latency numbers on your hardware.
+Numbers measured with `python eval.py` on the demo corpus. "Gold context" passes the exact source passage directly to the model (upper bound). "End-to-end" includes hybrid retrieval; the ~4% F1 gap reflects retrieval misses.
+
+Run `python quantize/quantize_int8.py` to reproduce latency on your hardware. Run `python eval.py --no-retrieval` for model-ceiling numbers, `python eval.py` for end-to-end.
 
 The training set is small (synthetic demo data). The base model already does well on extractive QA from SQuAD pre-training; fine-tuning on domain data helps mainly with domain-specific terminology.
 
@@ -165,16 +174,11 @@ Override the model with `OLLAMA_MODEL=mistral` env var.
 
 ## Retrieval quality
 
-The default retrieval is BM25 (keyword-based). It works well for direct terminology queries but misses paraphrase and synonym matches.
+Retrieval uses BM25 + dense vectors (ChromaDB + `all-MiniLM-L6-v2`, 22 MB) fused via Reciprocal Rank Fusion (RRF). BM25 handles exact-term queries; dense handles paraphrase and synonym matches. Both are always-on if `sentence-transformers` and `chromadb` are installed (included in `requirements.txt`).
 
-For better retrieval, set `USE_SEMANTIC=1` and install `sentence-transformers`:
+Cold-start embeds the corpus once and persists to `data/chroma_db/` — subsequent starts load the index directly. Per-query overhead is ~5ms for the dense encode.
 
-```bash
-pip install sentence-transformers
-USE_SEMANTIC=1 python gradio_app.py
-```
-
-This uses `all-MiniLM-L6-v2` (22 MB) and blends semantic similarity with BM25 scores. Cold-start adds ~2 seconds for embedding the corpus; per-query latency increase is minimal.
+BM25-only fallback kicks in automatically if the optional deps aren't installed.
 
 ## Project structure
 
