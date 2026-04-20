@@ -13,17 +13,23 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source
 COPY serve/ serve/
+COPY ui/ ui/
 COPY config.py config.py
-COPY data/corpus.json data/corpus.json
-COPY models/qa_int8/ models/qa_int8/
-COPY models/qa_onnx/ models/qa_onnx/
+COPY ingest.py ingest.py
+
+# Runtime data directories (corpus + models mounted as volumes or built at startup)
+RUN mkdir -p data models/qa_int8 models/qa_onnx
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+# Corpus and model paths — override via docker run -e or docker-compose.yml
+ENV CORPUS_PATH=data/corpus.json
+ENV MODEL_DIR=models/qa_int8
+ENV CHROMA_DIR=data/chroma_db
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "serve.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["uvicorn", "serve.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

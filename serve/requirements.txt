@@ -1,9 +1,27 @@
-# Inference server deps
-onnxruntime-gpu==1.21.0
+# Serve-layer dependencies (used by Dockerfile)
+# Keep in sync with the root requirements.txt
+
 transformers==4.51.3
 tokenizers>=0.21.0
+
+# ONNX inference (CPU-only in Docker — no GPU driver needed)
+onnxruntime==1.21.0
+onnx==1.17.0
+
+# Serving
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 pydantic==2.11.3
+python-multipart>=0.0.9
+httpx>=0.27.0
+
+# Core retrieval
 numpy>=1.26.0,<3.0
 rank-bm25==0.2.2
+
+# Hybrid retrieval
+chromadb>=1.0.0
+sentence-transformers>=3.0.0
+
+# Groq synthesis
+groq>=0.11.0
