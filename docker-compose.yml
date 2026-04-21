@@ -1,10 +1,10 @@
 version: "3.9"
 
 services:
-  xr-qa:
+  docpilot:
     build: .
-    image: xr-qa:latest
-    container_name: xr-qa
+    image: docpilot:latest
+    container_name: docpilot
     ports:
       - "8000:8000"
     environment:

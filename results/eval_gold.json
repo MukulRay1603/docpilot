@@ -1,0 +1,13 @@
+{
+  "mode": "gold_context",
+  "eval_script": "eval.py --no-retrieval",
+  "dataset": "data/qa_dataset.json",
+  "num_questions": 96,
+  "model": "deepset/roberta-base-squad2 (fine-tuned, INT8 ONNX)",
+  "f1": 71.11,
+  "em": 38.54,
+  "latency_p50_ms": 87.05,
+  "latency_p95_ms": 114.39,
+  "ran_on": "2026-04-21",
+  "hardware": "Intel Core i9-11900H @ 2.50GHz, CPUExecutionProvider (ONNX Runtime)"
+}

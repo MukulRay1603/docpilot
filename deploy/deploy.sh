@@ -17,7 +17,7 @@ APP_PORT=8000
 GREEN_PORT=8001
 CONTAINER_BLUE="docpilot-blue"
 CONTAINER_GREEN="docpilot-green"
-NGINX_UPSTREAM="/etc/nginx/conf.d/xr-qa-upstream.conf"
+NGINX_UPSTREAM="/etc/nginx/conf.d/docpilot-upstream.conf"
 HEALTH_URL="http://localhost:${GREEN_PORT}/health"
 HEALTH_TIMEOUT=60
 

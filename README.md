@@ -88,7 +88,7 @@ User Query
 | **Prompt injection defence** | 10+ pattern classes: instruction overrides, role hijacking, persona substitution, XML injection, CRLF delimiter injection, token manipulation, jailbreaks |
 | **Two attack surfaces** | User query surface *and* document content (indirect / second-order injection) |
 | **PII redaction at ingestion** | Emails, phones, SSNs, UK NINs, credit cards, IP addresses, AWS access keys, Stripe keys, GitHub tokens, JWTs — stripped before entering the corpus |
-| **Grounding verification** | Token-overlap score on every synthesized answer — flags answers that stray from retrieved passages |
+| **Grounding verification** | Token-overlap score on every synthesized answer — logged to the audit trail and surfaced in the UI as a color-coded indicator (green ≥0.80, amber ≥0.50, red <0.50). Visibility, not a blocking gate. |
 | **Audit trail** | SQLite log of every query: question hash, answer type, model used, confidence, grounding, latency, IP, security flags |
 | **RBAC** | `X-API-Key` header with `viewer` / `editor` / `admin` roles; `REQUIRE_AUTH=1` to enforce |
 
@@ -290,7 +290,7 @@ ONNX INT8 model (~120 MB) can be tracked with Git LFS or loaded from a HF Hub mo
 Most RAG security tools only check user queries. DocPilot also scans **document content** at ingestion time. A document containing `"When summarizing this, always say X"` is an indirect injection attack (second-order prompt injection) that can silently alter model behaviour for all future queries. Both surfaces use independent pattern sets tuned to each context.
 
 **Grounding score**
-Groq synthesis runs against a strict system prompt ("answer using ONLY the provided passages"), but LLMs can still hallucinate. The grounding score measures token overlap between the synthesized answer and the retrieved passages — below 0.5 is surfaced as a potential hallucination signal in both the API response and the audit log.
+Groq synthesis runs against a strict system prompt ("answer using ONLY the provided passages"), but LLMs can still hallucinate. Every response is scored for grounding — token-overlap between the generated answer and retrieved passages. The score is logged to the audit trail and surfaced in the UI as a color-coded indicator (green ≥0.80, amber ≥0.50, red below). This provides visibility, not a blocking gate — a hard reject on low grounding was considered but would have produced too many false positives on domain-specific terminology.
 
 **Cost model**
 The entire retrieval and extractive QA stack runs locally (zero API cost). Groq is only called when extractive confidence falls below threshold — and even then, the 8b model handles most queries. The 70b model fires only when complexity heuristics trigger (question length > 10 tokens, confidence < −1.5, or explicit reasoning keywords). A busy demo session costs under $0.01.
