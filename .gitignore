@@ -20,8 +20,18 @@ data/audit.db
 
 # Secrets
 .env
+.env.*
+!.env.example
 *.pem
 *.key
+credentials*.json
+service-account*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
 # Claude Code
 .claude/
@@ -29,3 +39,14 @@ data/audit.db
 # OS
 .DS_Store
 Thumbs.db
+
+# Misc
+*.log
+.ipynb_checkpoints/
+
+# Session artifacts
+CHANGES_APPLIED.md
+CLEANUP_DONE_*.md
+*_VERIFICATION.md
+*_RECON.md
+ROTATION_CHECKLIST.md
