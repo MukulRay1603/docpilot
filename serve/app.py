@@ -349,7 +349,7 @@ class PIIResponse(BaseModel):
 
 
 @app.post("/security/check", response_model=InjectionResponse)
-def security_check(req: InjectionRequest, request: Request):
+def security_check(req: InjectionRequest, request: Request, _role: str = Depends(get_role)):
     q   = sanitize_input(req.text, MAX_QUESTION_LEN)
     res = check_injection(q)
     if not res.safe:
@@ -358,13 +358,13 @@ def security_check(req: InjectionRequest, request: Request):
 
 
 @app.post("/security/check-document", response_model=InjectionResponse)
-def security_check_doc(req: InjectionRequest):
+def security_check_doc(req: InjectionRequest, _role: str = Depends(get_role)):
     res = check_document_injection(req.text[:10_000])
     return InjectionResponse(safe=res.safe, threat_type=res.threat_type, matched=res.matched)
 
 
 @app.post("/security/redact", response_model=PIIResponse)
-def security_redact(req: PIIRequest):
+def security_redact(req: PIIRequest, _role: str = Depends(get_role)):
     result = redact_pii(req.text[:50_000])
     return PIIResponse(
         redacted_text=result.redacted_text,
