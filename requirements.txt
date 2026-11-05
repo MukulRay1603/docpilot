@@ -16,7 +16,11 @@ tokenizers>=0.21.0
 
 # ── ONNX export + quantization ───────────────────────────────────────────────
 onnx==1.17.0
-onnxruntime-gpu==1.21.0   # CUDA 12.x; swap for `onnxruntime` if CPU-only
+onnxruntime==1.21.0       # CPU build. chromadb also depends on `onnxruntime`, so
+                          # pinning it here gives pip one package to resolve.
+# GPU (CUDA 12.x): install the GPU build *instead*, after this file:
+#   pip uninstall -y onnxruntime && pip install onnxruntime-gpu==1.21.0
+# Never have both installed: they write into the same `onnxruntime/` package.
 onnxscript>=0.1.0
 
 # ── Serving ──────────────────────────────────────────────────────────────────

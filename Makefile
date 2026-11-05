@@ -1,10 +1,12 @@
 PYTHON := python
 PIP    := pip
 
-.PHONY: install demo-corpus train export quantize benchmark serve ui smoke all clean
+.PHONY: install demo-corpus train export quantize benchmark serve ui smoke test all clean
 
+# CPU by default; for CUDA: make install TORCH_INDEX=https://download.pytorch.org/whl/cu128
+TORCH_INDEX ?= https://download.pytorch.org/whl/cpu
 install:
-	$(PIP) install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+	$(PIP) install torch --index-url $(TORCH_INDEX)
 	$(PIP) install -r requirements.txt
 
 # Build the demo corpus (XR/remote-assist domain)
@@ -34,9 +36,12 @@ serve:
 ui:
 	$(PYTHON) gradio_app.py
 
-# Smoke test — no model files required for most tests
+# Smoke test — model-free (BM25 only), writes only to a temp dir
 smoke:
 	$(PYTHON) -m tests.smoke_test
+
+test:
+	$(PYTHON) -m pytest -q
 
 # Full pipeline from scratch
 all: demo-corpus train export quantize
