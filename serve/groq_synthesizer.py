@@ -1,6 +1,7 @@
 import hashlib
 import os
 import time
+from collections import OrderedDict
 from typing import Optional
 
 try:
@@ -29,7 +30,8 @@ _SYSTEM = (
 )
 
 _client: Optional[object] = None
-_cache:  dict[str, tuple[str, str]] = {}
+# LRU: a hit moves the entry to the end; eviction pops from the front.
+_cache: "OrderedDict[str, tuple[str, str]]" = OrderedDict()
 
 
 def _get_client():
@@ -43,8 +45,8 @@ def _get_client():
 
 def _cache_key(question: str, passages: list[str]) -> str:
     payload = question.lower().strip() + "||" + "||".join(
-        p[:120] for p in passages[:_MAX_PASSAGES]
-    )
+        p[:_MAX_PASS_CHARS] for p in passages[:_MAX_PASSAGES]
+    )  # same passage text the prompt uses, so different prompts can't share a key
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
 
 
@@ -71,9 +73,18 @@ def _build_user_message(question: str, passages: list[str]) -> str:
     return f"Document passages:\n{context}\n\nQuestion: {question}\n\nAnswer:"
 
 
-def _evict_if_full() -> None:
-    if len(_cache) >= _CACHE_MAX:
-        _cache.pop(next(iter(_cache)))
+def _cache_get(key: str) -> tuple[str, str] | None:
+    hit = _cache.get(key)
+    if hit is not None:
+        _cache.move_to_end(key)
+    return hit
+
+
+def _cache_put(key: str, value: tuple[str, str]) -> None:
+    _cache[key] = value
+    _cache.move_to_end(key)
+    while len(_cache) > _CACHE_MAX:
+        _cache.popitem(last=False)
 
 
 def synthesize(
@@ -86,9 +97,9 @@ def synthesize(
         return None, ""
 
     key = _cache_key(question, passages)
-    if key in _cache:
-        answer, label = _cache[key]
-        return answer, "cached"
+    hit = _cache_get(key)
+    if hit is not None:
+        return hit[0], "cached"
 
     use_smart   = _is_complex(question, confidence)
     model_order = [MODEL_SMART, MODEL_FAST] if use_smart else [MODEL_FAST, MODEL_SMART]
@@ -110,8 +121,7 @@ def synthesize(
                 if not text:
                     break
                 label = "groq-70b" if "70b" in model else "groq-8b"
-                _evict_if_full()
-                _cache[key] = (text, label)
+                _cache_put(key, (text, label))
                 return text, label
             except Exception as exc:
                 err = str(exc).lower()

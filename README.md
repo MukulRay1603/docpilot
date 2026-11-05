@@ -52,10 +52,10 @@ User Query
                         │
                         ▼
 ┌─────────────────────────────────────────────────┐
-│  Groq Synthesis  (confidence-gated)             │
-│  • High confidence → return extractive span     │
-│  • Low confidence  → llama-3.1-8b-instant       │
-│  • Complex query   → llama-3.3-70b-versatile    │
+│  Groq Synthesis  (optional, if GROQ_API_KEY)    │
+│  • Simple query    → llama-3.1-8b-instant       │
+│  • Complex query or low QA confidence → 70b     │
+│  • No key / error  → extractive span            │
 │  • LRU cache (500 entries) · retry + backoff    │
 └───────────────────────┬─────────────────────────┘
                         │
@@ -80,7 +80,7 @@ User Query
 
 ### Inference
 - **Extractive QA**: `deepset/roberta-base-squad2` fine-tuned on a domain-specific SQuAD v2.0 corpus, exported to **ONNX FP32** then dynamically quantized to **INT8** — 4× size reduction, 2–3× CPU speedup
-- **Synthesis**: Groq API with intelligent model routing — `llama-3.1-8b-instant` for fast/simple queries, `llama-3.3-70b-versatile` for complex ones, in-process LRU cache (500 entries), exponential back-off on rate limits, silent fallback to extractive
+- **Synthesis**: Groq API with intelligent model routing — `llama-3.1-8b-instant` for fast/simple queries, `llama-3.3-70b-versatile` for complex ones, QA confidence below −1.5 also routes to the larger model. When a key is set, the synthesized answer is returned for every query (there is no "skip the LLM when the span is confident" gate). In-process LRU cache (500 entries, per worker), exponential back-off on rate limits, silent fallback to extractive
 
 ### Security Layer
 | Feature | Detail |
