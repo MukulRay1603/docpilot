@@ -2,8 +2,16 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import time
 from pathlib import Path
+
+from serve.security import redact_pii
+
+# An answered query is flagged for review when its question contained PII, it
+# carried a threat type (blocked injection), or the answer's grounding score
+# fell below this threshold.
+FLAG_GROUNDING_BELOW = float(os.getenv("AUDIT_FLAG_GROUNDING_BELOW", "0.5"))
 
 _DEFAULT_DB = "data/audit.db"
 
@@ -70,6 +78,16 @@ def log_query(
     pii_detected: bool = False,
     pii_types:    list[str] | None = None,
 ) -> None:
+    # Never store raw PII: previews are redacted, and the PII flag/types are
+    # derived here so every caller gets them.
+    q_pii = redact_pii(question)
+    a_pii = redact_pii(answer)
+    types = sorted(set(pii_types or []) | {f["type"] for f in q_pii.found + a_pii.found})
+    pii_detected = bool(pii_detected or types)
+    flagged = bool(
+        flagged or threat_type or pii_detected
+        or (answer_type != "blocked" and grounding < FLAG_GROUNDING_BELOW)
+    )
     try:
         c = _conn()
         c.execute(
@@ -82,8 +100,8 @@ def log_query(
             (
                 time.time(),
                 hashlib.sha256(question.encode()).hexdigest()[:12],
-                question[:140],
-                answer[:220],
+                q_pii.redacted_text[:140],
+                a_pii.redacted_text[:220],
                 answer_type,
                 model_used,
                 round(confidence, 4),
@@ -97,13 +115,13 @@ def log_query(
                 int(flagged),
                 threat_type,
                 int(pii_detected),
-                json.dumps(pii_types or []),
+                json.dumps(types),
             ),
         )
         c.commit()
         c.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[audit] failed to write audit_log row: {exc}", file=sys.stderr)
 
 
 def log_security_event(event_type: str, details: str, ip: str = "") -> None:
@@ -111,12 +129,12 @@ def log_security_event(event_type: str, details: str, ip: str = "") -> None:
         c = _conn()
         c.execute(
             "INSERT INTO security_events (ts, event_type, details, ip) VALUES (?,?,?,?)",
-            (time.time(), event_type, details[:300], ip),
+            (time.time(), event_type, redact_pii(details).redacted_text[:300], ip),
         )
         c.commit()
         c.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[audit] failed to write security event: {exc}", file=sys.stderr)
 
 
 def get_recent_queries(n: int = 15) -> list[dict]:

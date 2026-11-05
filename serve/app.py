@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -110,11 +111,24 @@ class IngestResponse(BaseModel):
     pii_types:    list[str] = []
 
 
+# X-Forwarded-For is client-controlled. Only honour it when the direct peer is
+# a proxy we configured (TRUSTED_PROXIES="10.0.0.5,127.0.0.1"), and then take
+# the right-most hop that is not one of our proxies.
+TRUSTED_PROXIES: set[str] = {
+    p.strip() for p in os.getenv("TRUSTED_PROXIES", "").split(",") if p.strip()
+}
+
+
 def _client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
     forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    if not forwarded or peer not in TRUSTED_PROXIES:
+        return peer
+    hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+    for hop in reversed(hops):
+        if hop not in TRUSTED_PROXIES:
+            return hop
+    return peer
 
 
 def _guard_question(question: str, ip: str) -> str:
@@ -125,6 +139,11 @@ def _guard_question(question: str, ip: str) -> str:
             event_type=result.threat_type,
             details=f"Query injection: {result.matched!r}",
             ip=ip,
+        )
+        log_query(
+            question=q, answer="", answer_type="blocked", model_used="none",
+            confidence=0.0, grounding=0.0, sources=[], latency={}, ip=ip,
+            flagged=True, threat_type=result.threat_type,
         )
         raise HTTPException(
             status_code=400,
@@ -262,6 +281,7 @@ def answer_from_corpus(req: CorpusRequest, request: Request, _role: str = Depend
 
 @app.post("/corpus/ingest", response_model=IngestResponse)
 async def ingest_text(
+    request: Request,
     text:   str = Form(...),
     source: str = Form("upload"),
     _role:  str = Depends(require_role("editor")),
@@ -274,6 +294,7 @@ async def ingest_text(
         log_security_event(
             event_type=f"doc_{doc_check.threat_type}",
             details=f"Indirect injection in upload: {doc_check.matched!r}",
+            ip=_client_ip(request),
         )
         raise HTTPException(
             status_code=400,
