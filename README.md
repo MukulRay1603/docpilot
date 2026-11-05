@@ -283,7 +283,7 @@ GROQ_API_KEY=gsk_... docker compose up
 2. Add `GROQ_API_KEY` as a **Repository secret** in Space Settings → Variables and secrets
 3. Entry point is `app.py` → launches `gradio_app.py`
 
-ONNX INT8 model (~120 MB) can be tracked with Git LFS or loaded from a HF Hub model repository.
+ONNX INT8 model (~125 MB) can be tracked with Git LFS or loaded from a HF Hub model repository.
 
 ---
 
