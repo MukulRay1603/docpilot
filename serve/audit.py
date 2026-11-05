@@ -1,15 +1,22 @@
 import hashlib
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
 
-_DB_PATH = Path("data/audit.db")
+_DEFAULT_DB = "data/audit.db"
+
+
+def _db_path() -> Path:
+    # Resolved per call so tests can point AUDIT_DB at a temp file.
+    return Path(os.getenv("AUDIT_DB", _DEFAULT_DB))
 
 
 def _conn() -> sqlite3.Connection:
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(str(_DB_PATH))
+    db = _db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(str(db))
     c.row_factory = sqlite3.Row
     c.execute("""
         CREATE TABLE IF NOT EXISTS audit_log (

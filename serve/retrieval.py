@@ -58,8 +58,36 @@ def _check_model_compat(persist_dir: str, current_model: str) -> bool:
     return True
 
 
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+
 class Retriever:
-    def __init__(self, passages: list[dict], persist_dir: str = CHROMA_DIR):
+    """BM25 always; BGE + Chroma and the cross-encoder when they can load.
+
+    use_dense / use_reranker: None means "on if the packages are installed and
+    DOCPILOT_BM25_ONLY is not set". Any failure while loading a model (no
+    network, missing weights, bad cache) degrades to BM25 instead of crashing
+    startup. `self.mode` reports what actually loaded.
+    """
+
+    def __init__(
+        self,
+        passages: list[dict],
+        persist_dir: str | None = None,
+        use_dense: bool | None = None,
+        use_reranker: bool | None = None,
+    ):
+        bm25_only = _env_flag("DOCPILOT_BM25_ONLY")
+        if persist_dir is None:
+            # Read at construction time, not import time, so callers/tests can
+            # redirect the index after importing this module.
+            persist_dir = os.getenv("CHROMA_DIR", CHROMA_DIR)
+        if use_dense is None:
+            use_dense = _HAS_DENSE and not bm25_only
+        if use_reranker is None:
+            use_reranker = _HAS_RERANKER and not bm25_only
+        self.persist_dir = persist_dir
         self.passages = passages
         self._bm25: BM25Okapi | None = (
             BM25Okapi([_tok(p["text"]) for p in passages]) if passages else None
@@ -69,19 +97,33 @@ class Retriever:
         self._encoder    = None
         self._reranker   = None
 
-        if _HAS_DENSE and passages:
-            self._init_dense(persist_dir)
+        self.dense_error: str | None = None
+        if use_dense and _HAS_DENSE and passages:
+            try:
+                self._init_dense(persist_dir)
+            except Exception as exc:  # model download / load / index failure
+                self.dense_error = f"{type(exc).__name__}: {exc}"
+                print(f"[retrieval] Dense retrieval unavailable, using BM25 only: {self.dense_error}")
+                self._chroma = self._collection = self._encoder = None
 
-        if _HAS_RERANKER:
+        if use_reranker and _HAS_RERANKER:
             try:
                 self._reranker = CrossEncoder(_RERANK_MODEL, max_length=512)
                 print(f"[retrieval] Cross-encoder loaded: {_RERANK_MODEL}")
             except Exception as exc:
                 print(f"[retrieval] Cross-encoder unavailable: {exc}")
+                self._reranker = None
+
+    @property
+    def mode(self) -> str:
+        dense = self._collection is not None and self._encoder is not None
+        base = "hybrid" if dense else "bm25"
+        return base + ("+rerank" if self._reranker is not None else "")
 
     def _init_dense(self, persist_dir: str) -> None:
+        encoder = SentenceTransformer(_EMBED_MODEL)  # may raise if the model can't load
         compat = _check_model_compat(persist_dir, _EMBED_MODEL)
-        self._encoder = SentenceTransformer(_EMBED_MODEL)
+        self._encoder = encoder
         Path(persist_dir).mkdir(parents=True, exist_ok=True)
 
         client = chromadb.PersistentClient(path=persist_dir)

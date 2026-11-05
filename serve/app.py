@@ -142,6 +142,7 @@ def health(_role: str = Depends(get_role)):
         "status":       "ok",
         "model_loaded": engine is not None,
         "corpus_size":  len(corpus),
+        "retrieval":    retriever.mode if retriever is not None else "none",
         "synthesis":    "groq" if groq_up() else "extractive_only",
         "groq_cache":   groq_cache_stats(),
         "audit":        audit_stats(),
