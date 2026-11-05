@@ -14,7 +14,6 @@ Outputs:
     models/qa_finetuned/   -- HuggingFace model dir (PyTorch weights)
 """
 
-import json
 from pathlib import Path
 
 import torch
@@ -29,6 +28,11 @@ from transformers import (
 )
 import numpy as np
 import collections
+import shutil
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent))
+from data_utils import load_splits  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Config
@@ -36,6 +40,7 @@ import collections
 BASE_MODEL = "deepset/roberta-base-squad2"   # already SQuAD-tuned; great starting point
 DATA_PATH  = Path(__file__).parent.parent / "data"   / "qa_dataset.json"
 OUTPUT_DIR = Path(__file__).parent.parent / "models" / "qa_finetuned"
+WORK_DIR   = Path(__file__).parent.parent / "models" / "qa_finetuned_checkpoints"  # Trainer checkpoints
 
 MAX_LENGTH = 384
 DOC_STRIDE = 128
@@ -55,25 +60,10 @@ print(f"Training on: {DEVICE} | GPU: {torch.cuda.get_device_name(0) if DEVICE ==
 # Load data
 # ---------------------------------------------------------------------------
 def load_squad_json(path: Path) -> DatasetDict:
-    raw = json.loads(path.read_text())
-
-    def flatten(split_data):
-        rows = []
-        for article in split_data["data"]:
-            for para in article["paragraphs"]:
-                ctx = para["context"]
-                for qa in para["qas"]:
-                    rows.append({
-                        "id": qa["id"],
-                        "context": ctx,
-                        "question": qa["question"],
-                        "answers": qa["answers"],
-                    })
-        return rows
-
+    train_rows, val_rows = load_splits(path)
     return DatasetDict({
-        "train": Dataset.from_list(flatten(raw["train"])),
-        "validation": Dataset.from_list(flatten(raw["validation"])),
+        "train": Dataset.from_list(train_rows),
+        "validation": Dataset.from_list(val_rows),
     })
 
 
@@ -238,12 +228,12 @@ def make_compute_metrics(eval_dataset, validation_features, tokenizer):
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # Validate the dataset before touching the network or the output dir.
+    raw_datasets = load_squad_json(DATA_PATH)
 
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     model = AutoModelForQuestionAnswering.from_pretrained(BASE_MODEL)
 
-    raw_datasets = load_squad_json(DATA_PATH)
     print(f"Loaded {len(raw_datasets['train'])} train / {len(raw_datasets['validation'])} val examples")
 
     train_dataset = raw_datasets["train"].map(
@@ -260,7 +250,7 @@ def main():
     eval_dataset = validation_features.remove_columns(["example_id", "offset_mapping"])
 
     args = TrainingArguments(
-        output_dir=str(OUTPUT_DIR),
+        output_dir=str(WORK_DIR),
         eval_strategy="no",          # skip per-epoch eval; we compute manually after
         save_strategy="epoch",
         learning_rate=LR,
@@ -285,8 +275,14 @@ def main():
     )
 
     trainer.train()
-    trainer.save_model(str(OUTPUT_DIR))
-    tokenizer.save_pretrained(str(OUTPUT_DIR))
+    # Save to a staging dir, then swap it in, so a crash never leaves an
+    # empty/partial models/qa_finetuned/ for export_onnx.py to choke on.
+    staging = OUTPUT_DIR.with_name(OUTPUT_DIR.name + ".staging")
+    shutil.rmtree(staging, ignore_errors=True)
+    trainer.save_model(str(staging))
+    tokenizer.save_pretrained(str(staging))
+    shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
+    staging.rename(OUTPUT_DIR)
     print(f"\nModel saved to {OUTPUT_DIR}")
 
     # Manual evaluation with span-extraction postprocessing
