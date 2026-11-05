@@ -93,6 +93,14 @@ def redact_pii(text: str) -> PIIResult:
     return PIIResult(redacted_text=redacted, found=found)
 
 
+def screen_document(text: str) -> tuple[PIIResult, SecurityResult]:
+    """Shared ingestion gate for every path that adds text to the corpus
+    (POST /corpus/ingest and the ingest.py CLI): redact PII first, then run the
+    document-surface injection check on the redacted text."""
+    pii = redact_pii(text)
+    return pii, check_document_injection(pii.redacted_text)
+
+
 def sanitize_input(text: str, max_len: int = MAX_QUESTION_LEN) -> str:
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
     return text[:max_len]

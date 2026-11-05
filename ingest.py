@@ -19,7 +19,15 @@ Optional deps:
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from serve.security import screen_document  # noqa: E402
+
+
+class DocumentRejected(Exception):
+    """Raised when a document fails the indirect-injection check."""
 
 try:
     import pdfplumber
@@ -42,7 +50,15 @@ MIN_CHUNK    = 60    # passages shorter than this get merged with the next one
 
 
 def _chunk_text(text: str, source: str) -> list[dict]:
-    """Paragraph-aware chunking with word-level overlap."""
+    """Screen (PII redaction + injection check), then paragraph-aware chunking
+    with word-level overlap. Same gate as POST /corpus/ingest."""
+    pii, doc_check = screen_document(text)
+    if not doc_check.safe:
+        raise DocumentRejected(f"{doc_check.threat_type}: {doc_check.matched!r}")
+    if pii.has_pii:
+        types = sorted({f["type"] for f in pii.found})
+        print(f"[redacted PII: {', '.join(types)}]", end=" ", flush=True)
+    text = pii.redacted_text
     paras = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
 
     passages = []
@@ -119,9 +135,24 @@ def ingest_file(path: Path) -> list[dict]:
         return []
 
 
-def ingest_source(source: str) -> list[dict]:
+def _safe_ingest_file(path: Path, rejected: list[str]) -> list[dict]:
+    try:
+        return ingest_file(path)
+    except DocumentRejected as exc:
+        print(f"REJECTED ({exc})", end=" ")
+        rejected.append(f"{path}: {exc}")
+        return []
+
+
+def ingest_source(source: str, rejected: list[str] | None = None) -> list[dict]:
+    if rejected is None:
+        rejected = []
     if source.startswith("http://") or source.startswith("https://"):
-        return _ingest_url(source)
+        try:
+            return _ingest_url(source)
+        except DocumentRejected as exc:
+            rejected.append(f"{source}: {exc}")
+            return []
     p = Path(source)
     if p.is_dir():
         all_passages = []
@@ -129,12 +160,12 @@ def ingest_source(source: str) -> list[dict]:
         for f in sorted(p.rglob("*")):
             if f.is_file() and f.suffix.lower() in supported:
                 print(f"  {f.name} ...", end=" ", flush=True)
-                chunks = ingest_file(f)
+                chunks = _safe_ingest_file(f, rejected)
                 print(f"{len(chunks)} passages")
                 all_passages.extend(chunks)
         return all_passages
     elif p.is_file():
-        return ingest_file(p)
+        return _safe_ingest_file(p, rejected)
     else:
         raise FileNotFoundError(f"Not found: {source}")
 
@@ -151,7 +182,12 @@ def main():
     args = parser.parse_args()
 
     print(f"Ingesting: {args.source}")
-    new_passages = ingest_source(args.source)
+    rejected: list[str] = []
+    new_passages = ingest_source(args.source, rejected)
+    if rejected:
+        print(f"\n{len(rejected)} document(s) rejected by the injection check:")
+        for r in rejected:
+            print(f"  - {r}")
 
     if not new_passages:
         print("Nothing ingested.")

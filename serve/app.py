@@ -33,6 +33,7 @@ from serve.security import (
     grounding_score,
     redact_pii,
     sanitize_input,
+    screen_document,
 )
 
 engine:    Optional[QAEngine]   = None
@@ -267,10 +268,8 @@ async def ingest_text(
 ):
     global corpus, retriever
 
-    pii        = redact_pii(text)
-    clean_text = pii.redacted_text
-
-    doc_check = check_document_injection(clean_text)
+    pii, doc_check = screen_document(text)
+    clean_text     = pii.redacted_text
     if not doc_check.safe:
         log_security_event(
             event_type=f"doc_{doc_check.threat_type}",
