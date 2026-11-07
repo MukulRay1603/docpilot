@@ -17,7 +17,8 @@ COPY ui/ ui/
 COPY config.py config.py
 COPY ingest.py ingest.py
 
-# Runtime data directories (corpus + models mounted as volumes or built at startup)
+# Runtime data directories. Models and corpus are NOT baked into the image;
+# docker-compose.yml mounts ./models and ./data (build them first with make).
 RUN mkdir -p data models/qa_int8 models/qa_onnx
 
 ENV PYTHONPATH=/app
@@ -32,4 +33,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "serve.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# One worker: the corpus, BM25 index and Groq cache live in process memory, so
+# multiple workers would diverge after an upload. Scale with replicas instead.
+CMD ["uvicorn", "serve.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

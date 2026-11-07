@@ -20,6 +20,9 @@ import numpy as np
 from onnxruntime.quantization import quantize_dynamic, QuantType
 import onnxruntime as ort
 
+sys.path.insert(0, str(Path(__file__).parent))
+from providers import gpu_session_active  # noqa: E402
+
 ONNX_DIR = Path(__file__).parent.parent / "models" / "qa_onnx"
 INT8_DIR = Path(__file__).parent.parent / "models" / "qa_int8"
 FP32_PATH = ONNX_DIR / "model.onnx"
@@ -59,6 +62,15 @@ def benchmark():
         print("\n--- GPU (CUDA) ---")
         sess = ort.InferenceSession(str(FP32_PATH),
                                     providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        if not gpu_session_active(sess.get_providers()):
+            # The GPU wheel advertises CUDA even when cuDNN/CUDA can't load; ORT
+            # then silently runs on CPU. Don't report that as a GPU number.
+            print(f"CUDA provider failed to load (session providers: {sess.get_providers()}); "
+                  "skipping GPU benchmark")
+            sess = None
+    else:
+        sess = None
+    if sess is not None:
         for _ in range(5):
             sess.run(None, dummy)
         latencies = []

@@ -8,8 +8,17 @@ model loading + Groq synthesis if the artifacts are present.
 import sys
 import os
 
+import tempfile
+
 # Run from project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+# Isolate every side effect BEFORE any serve.* import: the smoke test must never
+# write to the real data/chroma_db or data/audit.db, and must not download models.
+_SMOKE_TMP = tempfile.mkdtemp(prefix="docpilot_smoke_")
+os.environ["CHROMA_DIR"] = os.path.join(_SMOKE_TMP, "chroma")
+os.environ["AUDIT_DB"] = os.path.join(_SMOKE_TMP, "audit.db")
+os.environ["DOCPILOT_BM25_ONLY"] = "1"
 
 passed: list[str] = []
 failed: list[str] = []
@@ -187,7 +196,7 @@ def t_groq_complexity_routing():
     assert _is_complex("What is latency?", -2.0)  # low confidence triggers smart model
 
 
-# ── retrieval.py (in-memory BM25, no ChromaDB) ───────────────────────────────
+# ── retrieval.py (in-memory BM25, no ChromaDB, no model download) ───────────────────────────────
 
 def t_retrieval_bm25():
     try:
@@ -202,9 +211,10 @@ def t_retrieval_bm25():
         {"id": 2, "source": "test", "topic": "ml",      "text": "INT8 quantization reduces model size and speeds up CPU inference by 2-3x."},
         {"id": 3, "source": "test", "topic": "ml",      "text": "ONNX Runtime accelerates inference across CPU and GPU with graph optimization."},
     ]
-    # Point chroma to a temp dir so we don't pollute real index
-    os.environ["CHROMA_DIR"] = "data/_smoke_chroma_tmp"
-    r = Retriever(PASSAGES)
+    # BM25 only, temp index dir: model-free and never touches data/chroma_db
+    r = Retriever(PASSAGES, persist_dir=os.path.join(_SMOKE_TMP, "chroma"),
+                  use_dense=False, use_reranker=False)
+    assert r.mode == "bm25"
     results = r.retrieve("waveguide optics projection", top_k=2)
     assert len(results) >= 1
     top_text = results[0]["text"].lower()

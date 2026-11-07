@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,6 +34,7 @@ from serve.security import (
     grounding_score,
     redact_pii,
     sanitize_input,
+    screen_document,
 )
 
 engine:    Optional[QAEngine]   = None
@@ -109,11 +111,24 @@ class IngestResponse(BaseModel):
     pii_types:    list[str] = []
 
 
+# X-Forwarded-For is client-controlled. Only honour it when the direct peer is
+# a proxy we configured (TRUSTED_PROXIES="10.0.0.5,127.0.0.1"), and then take
+# the right-most hop that is not one of our proxies.
+TRUSTED_PROXIES: set[str] = {
+    p.strip() for p in os.getenv("TRUSTED_PROXIES", "").split(",") if p.strip()
+}
+
+
 def _client_ip(request: Request) -> str:
+    peer = request.client.host if request.client else "unknown"
     forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    if not forwarded or peer not in TRUSTED_PROXIES:
+        return peer
+    hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+    for hop in reversed(hops):
+        if hop not in TRUSTED_PROXIES:
+            return hop
+    return peer
 
 
 def _guard_question(question: str, ip: str) -> str:
@@ -124,6 +139,11 @@ def _guard_question(question: str, ip: str) -> str:
             event_type=result.threat_type,
             details=f"Query injection: {result.matched!r}",
             ip=ip,
+        )
+        log_query(
+            question=q, answer="", answer_type="blocked", model_used="none",
+            confidence=0.0, grounding=0.0, sources=[], latency={}, ip=ip,
+            flagged=True, threat_type=result.threat_type,
         )
         raise HTTPException(
             status_code=400,
@@ -142,6 +162,7 @@ def health(_role: str = Depends(get_role)):
         "status":       "ok",
         "model_loaded": engine is not None,
         "corpus_size":  len(corpus),
+        "retrieval":    retriever.mode if retriever is not None else "none",
         "synthesis":    "groq" if groq_up() else "extractive_only",
         "groq_cache":   groq_cache_stats(),
         "audit":        audit_stats(),
@@ -260,20 +281,20 @@ def answer_from_corpus(req: CorpusRequest, request: Request, _role: str = Depend
 
 @app.post("/corpus/ingest", response_model=IngestResponse)
 async def ingest_text(
+    request: Request,
     text:   str = Form(...),
     source: str = Form("upload"),
     _role:  str = Depends(require_role("editor")),
 ):
     global corpus, retriever
 
-    pii        = redact_pii(text)
-    clean_text = pii.redacted_text
-
-    doc_check = check_document_injection(clean_text)
+    pii, doc_check = screen_document(text)
+    clean_text     = pii.redacted_text
     if not doc_check.safe:
         log_security_event(
             event_type=f"doc_{doc_check.threat_type}",
             details=f"Indirect injection in upload: {doc_check.matched!r}",
+            ip=_client_ip(request),
         )
         raise HTTPException(
             status_code=400,
@@ -328,7 +349,7 @@ class PIIResponse(BaseModel):
 
 
 @app.post("/security/check", response_model=InjectionResponse)
-def security_check(req: InjectionRequest, request: Request):
+def security_check(req: InjectionRequest, request: Request, _role: str = Depends(get_role)):
     q   = sanitize_input(req.text, MAX_QUESTION_LEN)
     res = check_injection(q)
     if not res.safe:
@@ -337,13 +358,13 @@ def security_check(req: InjectionRequest, request: Request):
 
 
 @app.post("/security/check-document", response_model=InjectionResponse)
-def security_check_doc(req: InjectionRequest):
+def security_check_doc(req: InjectionRequest, _role: str = Depends(get_role)):
     res = check_document_injection(req.text[:10_000])
     return InjectionResponse(safe=res.safe, threat_type=res.threat_type, matched=res.matched)
 
 
 @app.post("/security/redact", response_model=PIIResponse)
-def security_redact(req: PIIRequest):
+def security_redact(req: PIIRequest, _role: str = Depends(get_role)):
     result = redact_pii(req.text[:50_000])
     return PIIResponse(
         redacted_text=result.redacted_text,

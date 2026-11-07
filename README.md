@@ -11,11 +11,11 @@ pinned: false
 
 # DocPilot — Secure Document Intelligence
 
-> Fine-tuned extractive QA · BGE retrieval · Cross-encoder reranking · Groq synthesis · Enterprise security layer
+> Fine-tuned extractive QA · BGE retrieval · Cross-encoder reranking · Groq synthesis · Security layer (RBAC, audit, PII redaction, injection screening)
 
-DocPilot is a production-ready document question-answering system built for high-trust environments. Ask natural-language questions against any corpus of PDFs, Markdown, DOCX, or plain text files — every query passes through a multi-layer security pipeline before reaching the model.
+DocPilot is a document question-answering service built as a portfolio project for high-trust settings. Ask natural-language questions against any corpus of PDFs, Markdown, DOCX, or plain text files — every query passes through a multi-layer security pipeline before reaching the model.
 
-Originally built as an XR remote-assist tool where field technicians needed hands-free access to device manuals. Rebuilt as a domain-agnostic, enterprise-grade platform.
+Originally built as an XR remote-assist tool where field technicians needed hands-free access to device manuals. Rebuilt as a domain-agnostic service.
 
 ---
 
@@ -27,7 +27,7 @@ User Query
     ▼
 ┌─────────────────────────────────────────────────┐
 │  Security Gate                                  │
-│  • Prompt injection detection (10+ patterns)    │
+│  • Prompt injection screening (regex)           │
 │  • Input sanitization                           │
 │  • RBAC (X-API-Key: viewer / editor / admin)    │
 └───────────────────────┬─────────────────────────┘
@@ -52,10 +52,10 @@ User Query
                         │
                         ▼
 ┌─────────────────────────────────────────────────┐
-│  Groq Synthesis  (confidence-gated)             │
-│  • High confidence → return extractive span     │
-│  • Low confidence  → llama-3.1-8b-instant       │
-│  • Complex query   → llama-3.3-70b-versatile    │
+│  Groq Synthesis  (optional, if GROQ_API_KEY)    │
+│  • Simple query    → llama-3.1-8b-instant       │
+│  • Complex query or low QA confidence → 70b     │
+│  • No key / error  → extractive span            │
 │  • LRU cache (500 entries) · retry + backoff    │
 └───────────────────────┬─────────────────────────┘
                         │
@@ -80,17 +80,17 @@ User Query
 
 ### Inference
 - **Extractive QA**: `deepset/roberta-base-squad2` fine-tuned on a domain-specific SQuAD v2.0 corpus, exported to **ONNX FP32** then dynamically quantized to **INT8** — 4× size reduction, 2–3× CPU speedup
-- **Synthesis**: Groq API with intelligent model routing — `llama-3.1-8b-instant` for fast/simple queries, `llama-3.3-70b-versatile` for complex ones, in-process LRU cache (500 entries), exponential back-off on rate limits, silent fallback to extractive
+- **Synthesis**: Groq API with intelligent model routing — `llama-3.1-8b-instant` for fast/simple queries, `llama-3.3-70b-versatile` for complex ones, QA confidence below −1.5 also routes to the larger model. When a key is set, the synthesized answer is returned for every query (there is no "skip the LLM when the span is confident" gate). In-process LRU cache (500 entries, per worker), exponential back-off on rate limits, silent fallback to extractive
 
 ### Security Layer
 | Feature | Detail |
 |---|---|
-| **Prompt injection defence** | 10+ pattern classes: instruction overrides, role hijacking, persona substitution, XML injection, CRLF delimiter injection, token manipulation, jailbreaks |
+| **Prompt injection screening** | Regex patterns (instruction overrides, role hijacking, persona substitution, role delimiters, XML/token injection, prompt extraction, jailbreak phrases, a few non-English overrides), also run on a normalized copy of the text (Unicode, letter-spacing, leetspeak, base64). Catches common phrasings; paraphrases still get through (see `FIX_REPORT.md`). Not a substitute for treating retrieved text as data. |
 | **Two attack surfaces** | User query surface *and* document content (indirect / second-order injection) |
-| **PII redaction at ingestion** | Emails, phones, SSNs, UK NINs, credit cards, IP addresses, AWS access keys, Stripe keys, GitHub tokens, JWTs — stripped before entering the corpus |
+| **PII redaction at ingestion** | Regex redaction of emails, phones, SSNs, UK NINs, credit cards, IPv4 addresses, AWS access key IDs, Stripe keys, GitHub tokens, JWTs, applied on both ingestion paths (`POST /corpus/ingest` and `ingest.py`). Regex-based: names, addresses and international phone formats are not detected. |
 | **Grounding verification** | Token-overlap score on every synthesized answer — logged to the audit trail and surfaced in the UI as a color-coded indicator (green ≥0.80, amber ≥0.50, red <0.50). Visibility, not a blocking gate. |
-| **Audit trail** | SQLite log of every query: question hash, answer type, model used, confidence, grounding, latency, IP, security flags |
-| **RBAC** | `X-API-Key` header with `viewer` / `editor` / `admin` roles; `REQUIRE_AUTH=1` to enforce |
+| **Audit trail** | SQLite log of every query, including blocked ones: question hash, PII-redacted preview, answer type, model, confidence, grounding, latency, client IP (`X-Forwarded-For` only from `TRUSTED_PROXIES`), `flagged` (PII, blocked, or grounding < 0.5) and `pii_detected` |
+| **RBAC** | `X-API-Key` header with `viewer` / `editor` / `admin` roles; `REQUIRE_AUTH=1` to enforce (covers `/security/*` too). Keys come from `API_KEYS`; the public demo keys work only with `DEMO_MODE=1`. Keys are stored as SHA-256 digests and compared in constant time. |
 
 ### Interfaces
 - **Web UI** — custom SPA served by FastAPI (`GET /`): animated pipeline visualization, model routing badges, security lab with live injection tester and PII redactor, audit log dashboard
@@ -101,16 +101,17 @@ User Query
 
 ## Performance
 
+Single 384-token forward pass, batch 1, ONNX Runtime CPU, 50 timed iterations (`make quantize`). A real `/answer/corpus` request runs several windows plus retrieval, so request latency is higher.
+
 | Metric | Value | Notes |
 |---|---|---|
-| INT8 model size | **120 MB** | vs 479 MB FP32 — 4× compression |
-| P95 latency (CPU, INT8) | **~120 ms** | i9-11900H, 4 threads |
-| P95 latency (CPU, FP32) | ~248 ms | 2× slower baseline |
-| F1 — gold context | **71.1%** | extractive model upper bound |
-| EM — gold context | **38.5%** | |
-| F1 — end-to-end (top-5) | **67.0%** | with BM25+dense retrieval |
-| Groq 8b cost per query | ~$0.000035 | free tier: 30 req/min |
-| Groq 70b cost per query | ~$0.0005 | only for complex/uncertain queries |
+| Model size | **496 MB → 125 MB (INT8)** | 4× smaller (`results/benchmark.json`; reproduced as 496.1 → 124.5 MB) |
+| P95 per pass, CPU FP32 → INT8 | **197 → 90 ms** | i9-11900H (`results/benchmark.json`). Independent re-run on a 4-vCPU Xeon: 248–266 → 81–93 ms. The ~2–3× ratio is the reproducible part; single ms values swing ±10–20% at n=50. |
+| GPU latency | not measured | An earlier "GPU" figure was very likely a silent CPU fallback; `make quantize` now skips the GPU line unless CUDA actually loads. |
+| F1 / EM, gold context | 71.1 / 38.5 | **Unproven as a quality measure.** The eval set is templated (each question is generated from its answer sentence) and a non-ML word-overlap baseline scores F1 98.3 / EM 97.9 on it. No clean held-out split. |
+| F1, end-to-end (top-5) | 66.0 | Same caveat (`results/eval_e2e.json`). Latency in that file is QA-engine time only; retrieval isn't timed. |
+| INT8 vs FP32 accuracy | not measured | |
+| Groq cost per query | ~$0.000035 (8b) / ~$0.0005 (70b) | Estimate from list prices, not measured |
 
 ---
 
@@ -122,9 +123,10 @@ git clone https://github.com/MukulRay1603/docpilot
 cd docpilot
 python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-# 2. Install PyTorch (CUDA) then deps
-pip install torch --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
+# 2. Install PyTorch, then deps (Python 3.11 or 3.12)
+pip install torch --index-url https://download.pytorch.org/whl/cpu     # CPU
+# pip install torch --index-url https://download.pytorch.org/whl/cu128 # CUDA 12.8
+pip install -r requirements.txt   # installs the CPU onnxruntime; see the file for the GPU swap
 
 # 3. Set your Groq API key
 cp .env.example .env
@@ -156,7 +158,7 @@ make ui            # Gradio on :7860 (optional)
 > **First run note:** Dense retrieval downloads `BAAI/bge-small-en-v1.5` (~130 MB) and
 > builds the ChromaDB index on startup. This takes ~30 seconds once; subsequent starts are instant.
 
-**Smoke test** (no model files required):
+**Smoke test** (no model files or network needed; uses BM25 only and a temp index/audit DB):
 ```bash
 make smoke
 ```
@@ -247,7 +249,8 @@ docpilot/
 ├── ui/
 │   └── index.html          # Custom SPA web UI (Tailwind CDN + vanilla JS)
 ├── tests/
-│   └── smoke_test.py       # 20-test suite; model-free for all security/audit/groq tests
+│   ├── smoke_test.py       # 20 checks, model-free; writes only to a temp dir
+│   └── test_*.py           # pytest suite (python -m pytest)
 ├── ingest.py               # PDF / TXT / MD / DOCX / URL → corpus.json
 ├── gradio_app.py           # Gradio UI (5 tabs incl. Security Lab + Audit Log)
 ├── app.py                  # HF Spaces entry point
@@ -280,7 +283,7 @@ GROQ_API_KEY=gsk_... docker compose up
 2. Add `GROQ_API_KEY` as a **Repository secret** in Space Settings → Variables and secrets
 3. Entry point is `app.py` → launches `gradio_app.py`
 
-ONNX INT8 model (~120 MB) can be tracked with Git LFS or loaded from a HF Hub model repository.
+ONNX INT8 model (~125 MB) can be tracked with Git LFS or loaded from a HF Hub model repository.
 
 ---
 

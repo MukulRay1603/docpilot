@@ -29,6 +29,9 @@ jobs:
       - name: Smoke tests
         run: python -m tests.smoke_test
 
+      - name: Unit tests
+        run: python -m pytest -q
+
   docker:
     needs: test
     if: github.ref == 'refs/heads/main'
