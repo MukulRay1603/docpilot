@@ -6,4 +6,5 @@ transformers==4.51.3
 tokenizers>=0.21.0
 numpy>=1.26.0,<3.0
 python-dotenv>=1.0.0
+onnxruntime==1.21.0
 pytest>=8.0
