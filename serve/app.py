@@ -161,6 +161,8 @@ def health(_role: str = Depends(get_role)):
     return {
         "status":       "ok",
         "model_loaded": engine is not None,
+        # Set only by test/demo stand-in engines, so the UI can label them.
+        "qa_engine_label": getattr(engine, "label", None),
         "corpus_size":  len(corpus),
         "retrieval":    retriever.mode if retriever is not None else "none",
         "synthesis":    "groq" if groq_up() else "extractive_only",
